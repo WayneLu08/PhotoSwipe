@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>PhotoSwipe - 滑动相册整理</title>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <style>
+    :root {
+      --bg-primary: #0f172a;
+      --bg-card: #1e293b;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent-like: #10b981;
+      --accent-album: #3b82f6;
+      --accent-delete: #ef4444;
+      --accent-keep: #8b5cf6;
+      --card-radius: 20px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #020617;
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+    }
+
+    .phone-container {
+      width: 100%;
+      max-width: 420px;
+      height: 100vh;
+      max-height: 860px;
+      background: var(--bg-primary);
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+    }
+
+    @media (min-width: 480px) {
+      .phone-container {
+        border-radius: 36px;
+        border: 8px solid #334155;
+        height: 92vh;
+      }
+    }
+
+    /* 顶部导航 */
+    header {
+      padding: 16px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 10;
+    }
+
+    .app-title {
+      font-size: 20px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: linear-gradient(135deg, #a78bfa, #38bdf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .top-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .icon-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: var(--text-main);
+      padding: 8px 12px;
+      border-radius: 9999px;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .icon-btn:active {
+      transform: scale(0.95);
+      background: rgba(255, 255, 255, 0.16);
+    }
+
+    /* 进度条指示 */
+    .progress-bar-wrap {
+      padding: 0 20px 8px;
+    }
+
+    .progress-info {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .progress-track {
+      height: 4px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #38bdf8, #818cf8);
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    /* 核心卡片容器 */
+    .deck-container {
+      flex: 1;
+      position: relative;
+      margin: 10px 20px 20px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .card {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      background: var(--bg-card);
+      border-radius: var(--card-radius);
+      overflow: hidden;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+      cursor: grab;
+      touch-action: none;
+      transition: transform 0.1s linear;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .card:active {
+      cursor: grabbing;
+    }
+
+    .card-img-wrap {
+      flex: 1;
+      width: 100%;
+      position: relative;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .card-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      pointer-events: none;
+    }
+
+    .card-info {
+      padding: 14px 16px;
+      background: linear-gradient(to top, rgba(15, 23, 42, 0.95), rgba(15, 23, 42, 0.7));
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .card-name {
+      font-size: 16px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .card-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 4px;
+      display: flex;
+      gap: 12px;
+    }
+
+    /* 徽章 Badge（拖拽提示） */
+    .badge {
+      position: absolute;
+      padding: 8px 16px;
+      border-radius: 12px;
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s ease;
+      z-index: 5;
+    }
+
+    .badge-like {
+      top: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 3px solid var(--accent-like);
+      color: var(--accent-like);
+      background: rgba(16, 185, 129, 0.15);
+    }
+
+    .badge-album {
+      bottom: 90px;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 3px solid var(--accent-album);
+      color: var(--accent-album);
+      background: rgba(59, 130, 246, 0.15);
+    }
+
+    .badge-delete {
+      top: 40px;
+      right: 20px;
+      transform: rotate(15deg);
+      border: 3px solid var(--accent-delete);
+      color: var(--accent-delete);
+      background: rgba(239, 68, 68, 0.15);
+    }
+
+    .badge-keep {
+      top: 40px;
+      left: 20px;
+      transform: rotate(-15deg);
+      border: 3px solid var(--accent-keep);
+      color: var(--accent-keep);
+      background: rgba(139, 92, 246, 0.15);
+    }
+
+    /* 底部操作指导与按钮 */
+    .controls {
+      padding: 0 20px 24px;
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      position: relative;
+    }
+
+    .control-btn {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      border: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+      color: #fff;
+      font-size: 18px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      transition: transform 0.15s, filter 0.15s;
+    }
+
+    .control-btn:active {
+      transform: scale(0.9);
+    }
+
+    .btn-undo {
+      background: #334155;
+      color: #cbd5e1;
+    }
+
+    .btn-del {
+      background: #7f1d1d;
+      border: 1px solid #ef4444;
+      color: #fca5a5;
+    }
+
+    .btn-album {
+      background: #1e3a8a;
+      border: 1px solid #3b82f6;
+      color: #93c5fd;
+    }
+
+    .btn-like {
+      background: #064e3b;
+      border: 1px solid #10b981;
+      color: #6ee7b7;
+    }
+
+    .btn-keep {
+      background: #4c1d95;
+      border: 1px solid #8b5cf6;
+      color: #c4b5fd;
+    }
+
+    .control-label {
+      font-size: 9px;
+      margin-top: 2px;
+      font-weight: 600;
+    }
+
+    /* 空状态 / 结束状态 */
+    .empty-state {
+      text-align: center;
+      padding: 30px 20px;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .empty-title {
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .empty-desc {
+      color: var(--text-muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* 模态框 / 底部抽屉 (相册选择) */
+    .modal-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      z-index: 50;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+    }
+
+    .modal-overlay.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .drawer {
+      background: var(--bg-card);
+      border-top-left-radius: 24px;
+      border-top-right-radius: 24px;
+      padding: 24px 20px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      max-height: 80%;
+      overflow-y: auto;
+      transform: translateY(100%);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .modal-overlay.active .drawer {
+      transform: translateY(0);
+    }
+
+    .drawer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .drawer-title {
+      font-size: 17px;
+      font-weight: 600;
+    }
+
+    .album-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .album-card {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .album-card:active {
+      transform: scale(0.96);
+      border-color: var(--accent-album);
+      background: rgba(59, 130, 246, 0.15);
+    }
+
+    .album-icon {
+      font-size: 28px;
+    }
+
+    .album-name {
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .album-count {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .new-album-bar {
+      display: flex;
+      gap: 8px;
+    }
+
+    .input-text {
+      flex: 1;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 10px;
+      padding: 10px 14px;
+      color: #fff;
+      font-size: 14px;
+      outline: none;
+    }
+
+    .input-text:focus {
+      border-color: var(--accent-album);
+    }
+
+    .primary-btn {
+      background: linear-gradient(135deg, #38bdf8, #6366f1);
+      border: none;
+      color: #fff;
+      font-weight: 600;
+      padding: 10px 18px;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+
+    /* 整理结果统计模态框 */
+    .summary-stats {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      margin: 16px 0;
+    }
+
+    .stat-box {
+      padding: 14px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.04);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .stat-val {
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .stat-lbl {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="phone-container">
+    <!-- 顶部 -->
+    <header>
+      <div class="app-title">
+        <span>📸</span>
+        <span>PhotoSwipe</span>
+      </div>
+      <div class="top-actions">
+        <label for="file-input" class="icon-btn" title="导入本地照片">
+          <span>➕</span>
+          <span>导入照片</span>
+        </label>
+        <input type="file" id="file-input" multiple accept="image/*" style="display:none;" />
+        <button class="icon-btn" id="btn-show-summary">
+          <span>📊</span>
+          <span>清单</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- 进度 -->
+    <div class="progress-bar-wrap">
+      <div class="progress-info">
+        <span id="progress-text">准备开始</span>
+        <span id="counter-text">0 / 0</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+    </div>
+
+    <!-- 卡片舞台 -->
+    <div class="deck-container" id="deck">
+      <!-- 动态插入卡片 -->
+      <div class="empty-state" id="empty-state">
+        <div style="font-size: 54px;">🎉</div>
+        <div class="empty-title">相册整理完毕！</div>
+        <div class="empty-desc">你已经处理完了所有照片。<br>可以查看统计、导出分类或重新导入。</div>
+        <button class="primary-btn" id="btn-export-results" style="margin-top: 10px;">
+          📦 打包下载整理结果 (ZIP)
+        </button>
+        <button class="icon-btn" id="btn-reset-demo" style="margin-top: 8px;">
+          🔄 重新加载演示照片
+        </button>
+      </div>
+    </div>
+
+    <!-- 底部控制按钮 (点击或手势均可) -->
+    <div class="controls">
+      <button class="control-btn btn-undo" id="btn-undo" title="撤销上一次操作">
+        <span>↩</span>
+        <span class="control-label">撤销</span>
+      </button>
+
+      <button class="control-btn btn-del" id="btn-del" title="左滑：删除">
+        <span>🗑</span>
+        <span class="control-label">左滑删</span>
+      </button>
+
+      <button class="control-btn btn-album" id="btn-album" title="下滑：收纳相册">
+        <span>📁</span>
+        <span class="control-label">下滑收</span>
+      </button>
+
+      <button class="control-btn btn-like" id="btn-like" title="上滑：喜欢">
+        <span>❤️</span>
+        <span class="control-label">上滑爱</span>
+      </button>
+
+      <button class="control-btn btn-keep" id="btn-keep" title="右滑：保留">
+        <span>✅</span>
+        <span class="control-label">右滑留</span>
+      </button>
+    </div>
+
+    <!-- 模态框：收纳相册选择 -->
+    <div class="modal-overlay" id="album-modal">
+      <div class="drawer">
+        <div class="drawer-header">
+          <div class="drawer-title">收纳到哪个相册？</div>
+          <button class="icon-btn" id="btn-close-album">✕</button>
+        </div>
+
+        <div class="album-grid" id="album-list">
+          <!-- 动态渲染相册 -->
+        </div>
+
+        <div class="new-album-bar">
+          <input type="text" id="new-album-name" class="input-text" placeholder="输入新相册名称..." />
+          <button class="primary-btn" id="btn-create-album">新建并收纳</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 模态框：整理统计报告 -->
+    <div class="modal-overlay" id="summary-modal">
+      <div class="drawer">
+        <div class="drawer-header">
+          <div class="drawer-title">当前整理概况</div>
+          <button class="icon-btn" id="btn-close-summary">✕</button>
+        </div>
+
+        <div class="summary-stats">
+          <div class="stat-box">
+            <span class="stat-val" style="color:var(--accent-like)" id="stat-like">0</span>
+            <span class="stat-lbl">❤️ 喜欢收藏</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-val" style="color:var(--accent-album)" id="stat-album">0</span>
+            <span class="stat-lbl">📁 归档相册</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-val" style="color:var(--accent-delete)" id="stat-delete">0</span>
+            <span class="stat-lbl">🗑 标记删除</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-val" style="color:var(--accent-keep)" id="stat-keep">0</span>
+            <span class="stat-lbl">✅ 普通保留</span>
+          </div>
+        </div>
+
+        <div style="margin-top: 14px; display:flex; flex-direction:column; gap:8px;">
+          <button class="primary-btn" id="btn-export-from-modal">📦 导出分类与照片文件</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 默认相册分类
+    let albums = [
+      { id: 'travel', name: '旅行回忆', icon: '✈️', count: 0 },
+      { id: 'work', name: '工作与文档', icon: '💼', count: 0 },
+      { id: 'life', name: '日常生活', icon: '☕', count: 0 },
+      { id: 'food', name: '美食打卡', icon: '🍜', count: 0 },
+    ];
+
+    // 默认演示图片集合
+    const defaultPhotos = [
+      { id: 'p1', name: '雪山晨曦.jpg', url: 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&auto=format&fit=crop&q=80', date: '2026-09-15', size: '2.4 MB' },
+      { id: 'p2', name: '森林木屋.jpg', url: 'https://images.unsplash.com/photo-1448375240586-882707db888b?w=800&auto=format&fit=crop&q=80', date: '2026-09-18', size: '3.1 MB' },
+      { id: 'p3', name: '城市天际线.jpg', url: 'https://images.unsplash.com/photo-1477959858617-67f30bc75b82?w=800&auto=format&fit=crop&q=80', date: '2026-09-20', size: '4.0 MB' },
+      { id: 'p4', name: '海滩日落.jpg', url: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800&auto=format&fit=crop&q=80', date: '2026-09-22', size: '1.9 MB' },
+      { id: 'p5', name: '街角咖啡厅.jpg', url: 'https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?w=800&auto=format&fit=crop&q=80', date: '2026-09-25', size: '2.8 MB' },
+      { id: 'p6', name: '夜幕繁星.jpg', url: 'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=800&auto=format&fit=crop&q=80', date: '2026-09-28', size: '3.6 MB' },
+    ];
+
+    let photos = [...defaultPhotos];
+    let currentIndex = 0;
+    let history = []; // 操作历史队列，用于支持撤销
+    let pendingAlbumPhoto = null; // 下滑暂存待分配相册的照片
+
+    const deck = document.getElementById('deck');
+    const emptyState = document.getElementById('empty-state');
+    const progressFill = document.getElementById('progress-fill');
+    const progressText = document.getElementById('progress-text');
+    const counterText = document.getElementById('counter-text');
+
+    // 初始化渲染
+    function init() {
+      currentIndex = 0;
+      history = [];
+      renderDeck();
+      updateProgress();
+      renderAlbumList();
+    }
+
+    // 渲染卡片堆栈（只渲染当前及后面两张，保证极致流畅）
+    function renderDeck() {
+      deck.querySelectorAll('.card').forEach(c => c.remove());
+
+      if (currentIndex >= photos.length) {
+        emptyState.style.display = 'flex';
+        return;
+      }
+      emptyState.style.display = 'none';
+
+      // 渲染当前张和后两张
+      const maxCards = Math.min(photos.length - currentIndex, 3);
+      for (let i = maxCards - 1; i >= 0; i--) {
+        const photoIndex = currentIndex + i;
+        const photo = photos[photoIndex];
+        const card = createCardElement(photo, i);
+        deck.appendChild(card);
+      }
+    }
+
+    function createCardElement(photo, stackLevel) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.dataset.id = photo.id;
+      card.dataset.index = currentIndex + stackLevel;
+
+      // 堆叠深度样式（后面的卡片略微缩小、透明度降低）
+      const scale = 1 - stackLevel * 0.04;
+      const translateY = stackLevel * 10;
+      card.style.transform = `translateY(${translateY}px) scale(${scale})`;
+      card.style.zIndex = 10 - stackLevel;
+      card.style.opacity = stackLevel === 0 ? '1' : `${1 - stackLevel * 0.2}`;
+
+      card.innerHTML = `
+        <div class="badge badge-like">❤️ FAVORITE</div>
+        <div class="badge badge-album">📁 MOVE TO ALBUM</div>
+        <div class="badge badge-delete">🗑 DELETE</div>
+        <div class="badge badge-keep">✅ KEEP</div>
+
+        <div class="card-img-wrap">
+          <img class="card-img" src="${photo.url}" alt="${photo.name}" />
+        </div>
+        <div class="card-info">
+          <div class="card-name">${photo.name}</div>
+          <div class="card-meta">
+            <span>📅 ${photo.date || '今日'}</span>
+            <span>💾 ${photo.size || '未知'}</span>
+          </div>
+        </div>
+      `;
+
+      // 只为顶层卡片绑定手势监听
+      if (stackLevel === 0) {
+        bindGestures(card, photo);
+      }
+
+      return card;
+    }
+
+    // 手势与物理滑动引擎
+    function bindGestures(card, photo) {
+      let startX = 0;
+      let startY = 0;
+      let currentX = 0;
+      let currentY = 0;
+      let isDragging = false;
+
+      const badgeLike = card.querySelector('.badge-like');
+      const badgeAlbum = card.querySelector('.badge-album');
+      const badgeDelete = card.querySelector('.badge-delete');
+      const badgeKeep = card.querySelector('.badge-keep');
+
+      const onStart = (e) => {
+        isDragging = true;
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        startX = clientX;
+        startY = clientY;
+        card.style.transition = 'none';
+      };
+
+      const onMove = (e) => {
+        if (!isDragging) return;
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        currentX = clientX - startX;
+        currentY = clientY - startY;
+
+        // 旋转角度与横向位移挂钩
+        const rotate = currentX * 0.08;
+        card.style.transform = `translate(${currentX}px, ${currentY}px) rotate(${rotate}deg)`;
+
+        // 判定四方向并高亮对应 Badge
+        const absX = Math.abs(currentX);
+        const absY = Math.abs(currentY);
+
+        badgeLike.style.opacity = 0;
+        badgeAlbum.style.opacity = 0;
+        badgeDelete.style.opacity = 0;
+        badgeKeep.style.opacity = 0;
+
+        if (absY > absX) {
+          // 上下滑动主导
+          if (currentY < -40) {
+            badgeLike.style.opacity = Math.min(1, (-currentY - 40) / 70);
+          } else if (currentY > 40) {
+            badgeAlbum.style.opacity = Math.min(1, (currentY - 40) / 70);
+          }
+        } else {
+          // 左右滑动主导
+          if (currentX < -40) {
+            badgeDelete.style.opacity = Math.min(1, (-currentX - 40) / 70);
+          } else if (currentX > 40) {
+            badgeKeep.style.opacity = Math.min(1, (currentX - 40) / 70);
+          }
+        }
+      };
+
+      const onEnd = () => {
+        if (!isDragging) return;
+        isDragging = false;
+
+        const threshold = 90; // 滑动触发阈值
+        const absX = Math.abs(currentX);
+        const absY = Math.abs(currentY);
+
+        if (absY > absX && absY > threshold) {
+          if (currentY < -threshold) {
+            // 上滑：喜欢
+            swipeCard(card, photo, 'like', 0, -800, 0);
+          } else {
+            // 下滑：收纳到相册
+            swipeCard(card, photo, 'album', 0, 800, 0);
+          }
+        } else if (absX > threshold) {
+          if (currentX < -threshold) {
+            // 左滑：删除
+            swipeCard(card, photo, 'delete', -800, 0, -25);
+          } else {
+            // 右滑：保留
+            swipeCard(card, photo, 'keep', 800, 0, 25);
+          }
+        } else {
+          // 未达阈值，弹簧回弹
+          card.style.transition = 'transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)';
+          card.style.transform = 'translate(0px, 0px) rotate(0deg)';
+          badgeLike.style.opacity = 0;
+          badgeAlbum.style.opacity = 0;
+          badgeDelete.style.opacity = 0;
+          badgeKeep.style.opacity = 0;
+        }
+      };
+
+      // 绑定鼠标事件
+      card.addEventListener('mousedown', onStart);
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onEnd);
+
+      // 绑定移动端触摸事件
+      card.addEventListener('touchstart', onStart, { passive: true });
+      window.addEventListener('touchmove', onMove, { passive: true });
+      window.addEventListener('touchend', onEnd);
+    }
+
+    // 卡片飞出动画与动作执行
+    function swipeCard(card, photo, action, targetX, targetY, targetRotate) {
+      card.style.transition = 'transform 0.4s ease-out, opacity 0.4s ease-out';
+      card.style.transform = `translate(${targetX}px, ${targetY}px) rotate(${targetRotate}deg)`;
+      card.style.opacity = '0';
+
+      setTimeout(() => {
+        card.remove();
+
+        if (action === 'album') {
+          // 下滑弹出相册选择
+          pendingAlbumPhoto = photo;
+          openAlbumModal();
+        } else {
+          commitAction(photo, action);
+        }
+
+        currentIndex++;
+        updateProgress();
+        renderDeck();
+      }, 300);
+    }
+
+    // 记录操作到历史队列
+    function commitAction(photo, action, albumName = null) {
+      history.push({
+        photo,
+        action,
+        albumName,
+        index: currentIndex
+      });
+      updateStats();
+    }
+
+    // 撤销上一次操作
+    function undo() {
+      if (history.length === 0 || currentIndex === 0) {
+        alert('当前没有可撤销的操作');
+        return;
+      }
+
+      const lastOp = history.pop();
+      currentIndex--;
+      updateProgress();
+      updateStats();
+      renderDeck();
+    }
+
+    // 更新进度条
+    function updateProgress() {
+      const total = photos.length;
+      const current = Math.min(currentIndex, total);
+      const percent = total === 0 ? 0 : Math.round((current / total) * 100);
+
+      progressFill.style.width = `${percent}%`;
+      counterText.innerText = `${current} / ${total}`;
+      progressText.innerText = total === 0 ? '无照片' : (current >= total ? '整理完成' : `整理中 (${percent}%)`);
+    }
+
+    // 渲染相册抽屉
+    function renderAlbumList() {
+      const albumListEl = document.getElementById('album-list');
+      albumListEl.innerHTML = albums.map(a => `
+        <div class="album-card" onclick="selectAlbum('${a.name}')">
+          <div class="album-icon">${a.icon}</div>
+          <div class="album-name">${a.name}</div>
+          <div class="album-count">${a.count} 张</div>
+        </div>
+      `).join('');
+    }
+
+    function openAlbumModal() {
+      document.getElementById('album-modal').classList.add('active');
+    }
+
+    function closeAlbumModal() {
+      document.getElementById('album-modal').classList.remove('active');
+      pendingAlbumPhoto = null;
+    }
+
+    window.selectAlbum = function(albumName) {
+      if (pendingAlbumPhoto) {
+        commitAction(pendingAlbumPhoto, 'album', albumName);
+        const albumObj = albums.find(a => a.name === albumName);
+        if (albumObj) albumObj.count++;
+        renderAlbumList();
+      }
+      closeAlbumModal();
+    };
+
+    // 新建相册
+    document.getElementById('btn-create-album').onclick = () => {
+      const nameInput = document.getElementById('new-album-name');
+      const name = nameInput.value.trim();
+      if (!name) return;
+
+      albums.push({
+        id: 'album_' + Date.now(),
+        name: name,
+        icon: '📁',
+        count: 0
+      });
+      nameInput.value = '';
+      selectAlbum(name);
+    };
+
+    document.getElementById('btn-close-album').onclick = closeAlbumModal;
+
+    // 统计面板
+    function updateStats() {
+      let likes = 0, albumMoves = 0, deletes = 0, keeps = 0;
+      history.forEach(item => {
+        if (item.action === 'like') likes++;
+        else if (item.action === 'album') albumMoves++;
+        else if (item.action === 'delete') deletes++;
+        else if (item.action === 'keep') keeps++;
+      });
+
+      document.getElementById('stat-like').innerText = likes;
+      document.getElementById('stat-album').innerText = albumMoves;
+      document.getElementById('stat-delete').innerText = deletes;
+      document.getElementById('stat-keep').innerText = keeps;
+    }
+
+    document.getElementById('btn-show-summary').onclick = () => {
+      updateStats();
+      document.getElementById('summary-modal').classList.add('active');
+    };
+
+    document.getElementById('btn-close-summary').onclick = () => {
+      document.getElementById('summary-modal').classList.remove('active');
+    };
+
+    // 底部五大按钮对应操作
+    document.getElementById('btn-undo').onclick = undo;
+
+    function triggerActiveCardSwipe(action, tx, ty, rot) {
+      const topCard = deck.querySelector('.card[style*="z-index: 10"]');
+      if (!topCard || currentIndex >= photos.length) return;
+      const photo = photos[currentIndex];
+      swipeCard(topCard, photo, action, tx, ty, rot);
+    }
+
+    document.getElementById('btn-like').onclick = () => triggerActiveCardSwipe('like', 0, -800, 0);
+    document.getElementById('btn-album').onclick = () => triggerActiveCardSwipe('album', 0, 800, 0);
+    document.getElementById('btn-del').onclick = () => triggerActiveCardSwipe('delete', -800, 0, -25);
+    document.getElementById('btn-keep').onclick = () => triggerActiveCardSwipe('keep', 800, 0, 25);
+
+    // 导入本地图片功能
+    document.getElementById('file-input').addEventListener('change', (e) => {
+      const files = Array.from(e.target.files);
+      if (files.length === 0) return;
+
+      const userPhotos = files.map((file, idx) => ({
+        id: 'upload_' + Date.now() + '_' + idx,
+        name: file.name,
+        url: URL.createObjectURL(file),
+        fileObject: file,
+        date: new Date(file.lastModified).toISOString().split('T')[0],
+        size: (file.size / (1024 * 1024)).toFixed(1) + ' MB'
+      }));
+
+      photos = userPhotos;
+      init();
+    });
+
+    // 重新加载演示
+    document.getElementById('btn-reset-demo').onclick = () => {
+      photos = [...defaultPhotos];
+      init();
+    };
+
+    // 打包导出整理结果为 ZIP
+    async function exportResults() {
+      if (history.length === 0) {
+        alert('还没有任何整理记录！');
+        return;
+      }
+
+      const zip = new JSZip();
+      const reportLines = [
+        '# PhotoSwipe 整理报告',
+        `导出时间: ${new Date().toLocaleString()}`,
+        `处理总数: ${history.length} 张`,
+        '',
+        '## 详细分类明细:'
+      ];
+
+      // 创建分类文件夹
+      const likeFolder = zip.folder("喜欢_Favorites");
+      const keepFolder = zip.folder("保留_Keep");
+      const delFolder = zip.folder("待删除_DeleteList");
+      const albumFolder = zip.folder("归档相册_Albums");
+
+      history.forEach((item, i) => {
+        const desc = `[${item.action.toUpperCase()}] ${item.photo.name} ${item.albumName ? '-> ' + item.albumName : ''}`;
+        reportLines.push(`${i + 1}. ${desc}`);
+      });
+
+      zip.file("整理日志报告.txt", reportLines.join('\n'));
+
+      // 下载
+      const content = await zip.generateAsync({ type: "blob" });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(content);
+      a.download = `PhotoSwipe_整理结果_${new Date().toISOString().slice(0,10)}.zip`;
+      a.click();
+    }
+
+    document.getElementById('btn-export-results').onclick = exportResults;
+    document.getElementById('btn-export-from-modal').onclick = exportResults;
+
+    // 启动运行
+    init();
+  </script>
+</body>
+</html>
