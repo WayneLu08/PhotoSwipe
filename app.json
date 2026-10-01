@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "PhotoSwipe",
+    "slug": "photoswipe",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0f172a"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.weiwei.photoswipe",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#0f172a"
+      },
+      "permissions": [
+        "READ_MEDIA_IMAGES",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "VIBRATE"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "允许 PhotoSwipe 访问您的照片以进行滑动整理与分类",
+          "savePhotosPermission": "允许 PhotoSwipe 将照片归档至指定相册"
+        }
+      ]
+    ]
+  }
+}
