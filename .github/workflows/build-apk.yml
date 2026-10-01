@@ -24,8 +24,10 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 配置 Android SDK
-        uses: android-actions/setup-android@v3
+      - name: 验证 Android SDK 环境
+        run: |
+          echo "ANDROID_HOME: $ANDROID_HOME"
+          ls -ld $ANDROID_HOME
 
       - name: 安装项目依赖
         run: npm install
