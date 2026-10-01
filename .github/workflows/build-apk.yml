@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      CI: 1
 
     steps:
       - name: 检出代码
@@ -33,7 +35,7 @@ jobs:
         run: npm install
 
       - name: 预生成 Android 原生工程 (Prebuild)
-        run: npx expo prebuild --platform android --clean
+        run: npx expo prebuild --platform android --clean --no-install
 
       - name: 赋予 Gradle 执行权限
         run: chmod +x android/gradlew
