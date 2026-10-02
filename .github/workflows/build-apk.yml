@@ -38,7 +38,7 @@ jobs:
 
       - name: 配置 Release 签名与离线打包
         run: |
-          # 让 release 构建直接借用 debug 密钥完成签名，确保脱机安装可运行
+          # 1. 让 release 构建直接借用 debug 密钥完成签名，确保脱机安装可运行
           python3 -c "
           with open('android/app/build.gradle', 'r') as f:
               content = f.read()
@@ -56,8 +56,17 @@ jobs:
 
           with open('android/app/build.gradle', 'w') as f:
               f.write(content)
+
+          # 2. 给 AndroidManifest.xml 注入 requestLegacyExternalStorage 提高兼容性
+          manifest_path = 'android/app/src/main/AndroidManifest.xml'
+          with open(manifest_path, 'r') as f:
+              m_content = f.read()
+          if 'requestLegacyExternalStorage' not in m_content:
+              m_content = m_content.replace('<application', '<application android:requestLegacyExternalStorage=\"true\"', 1)
+              with open(manifest_path, 'w') as f:
+                  f.write(m_content)
           "
-          echo "build.gradle 配置完成"
+          echo "build.gradle 与 AndroidManifest 配置完成"
 
       - name: 赋予 Gradle 执行权限
         run: chmod +x android/gradlew
@@ -71,12 +80,12 @@ jobs:
       - name: 归档并验证生成的 APK
         run: |
           mkdir -p release-output
-          cp android/app/build/outputs/apk/release/*.apk release-output/PhotoSwipe-v1.3.0.apk
+          cp android/app/build/outputs/apk/release/*.apk release-output/PhotoSwipe-v1.4.0.apk
           ls -lh release-output/
 
       - name: 上传 APK 安装包至 GitHub Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: PhotoSwipe-Android-Offline-APK-v1.3.0
-          path: release-output/PhotoSwipe-v1.3.0.apk
+          name: PhotoSwipe-Android-Offline-APK-v1.4.0
+          path: release-output/PhotoSwipe-v1.4.0.apk
           retention-days: 14
