@@ -36,33 +36,28 @@ jobs:
       - name: 预生成 Android 原生工程 (Prebuild)
         run: npx expo prebuild --platform android --clean --no-install
 
-      - name: 配置离线打包与签名 (解决 unable to load script)
+      - name: 配置 Release 签名与离线打包
         run: |
-          # 1. 显式创建 assets 目录并打包离线 JS Bundle
-          mkdir -p android/app/src/main/assets
-          npx react-native bundle \
-            --platform android \
-            --dev false \
-            --entry-file node_modules/expo/AppEntry.js \
-            --bundle-output android/app/src/main/assets/index.android.bundle \
-            --assets-dest android/app/src/main/res \
-            --reset-cache
-
-          # 2. 配置 build.gradle：开启 bundleInDebug，并让 release 构建复用 debug 签名
+          # 让 release 构建直接借用 debug 密钥完成签名，确保脱机安装可运行
           python3 -c "
           with open('android/app/build.gradle', 'r') as f:
               content = f.read()
 
-          # 配置 release 自动免密签名 (使用 debug.keystore)
+          # 给 release buildTypes 增加 debug 签名配置与关闭混淆以防崩溃
+          old_block = 'buildTypes {'
+          new_block = '''buildTypes {
+                  release {
+                      signingConfig signingConfigs.debug
+                      minifyEnabled false
+                      shrinkResources false
+                  }'''
           if 'signingConfig signingConfigs.debug' not in content:
-              content = content.replace(
-                  'buildTypes {',
-                  'buildTypes {\n        release {\n            signingConfig signingConfigs.debug\n            minifyEnabled false\n            shrinkResources false\n        }'
-              )
+              content = content.replace(old_block, new_block, 1)
 
           with open('android/app/build.gradle', 'w') as f:
               f.write(content)
           "
+          echo "build.gradle 配置完成"
 
       - name: 赋予 Gradle 执行权限
         run: chmod +x android/gradlew
@@ -70,18 +65,18 @@ jobs:
       - name: 编译独立离线 Android APK (assembleRelease)
         run: |
           cd android
-          # 编译独立 Release APK，所有离线 JS 与资源均打包固化在安装包内
+          # assembleRelease 会自动触发 createBundleReleaseJsAndAssets 生成离线 JS bundle 并打包进 APK
           ./gradlew assembleRelease --no-daemon
 
       - name: 归档并验证生成的 APK
         run: |
           mkdir -p release-output
-          cp android/app/build/outputs/apk/release/*.apk release-output/PhotoSwipe-v1.1.0-release.apk
+          cp android/app/build/outputs/apk/release/*.apk release-output/PhotoSwipe-v1.1.0.apk
           ls -lh release-output/
 
       - name: 上传 APK 安装包至 GitHub Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: PhotoSwipe-Android-Offline-APK
-          path: release-output/PhotoSwipe-v1.1.0-release.apk
+          path: release-output/PhotoSwipe-v1.1.0.apk
           retention-days: 14
