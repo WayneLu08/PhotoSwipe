@@ -2,12 +2,12 @@
   "expo": {
     "name": "PhotoSwipe",
     "slug": "photoswipe",
-    "version": "1.0.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "light",
     "splash": {
-      "backgroundColor": "#0f172a"
+      "backgroundColor": "#F5F8F6"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -17,14 +17,15 @@
     },
     "android": {
       "package": "com.weiwei.photoswipe",
-      "versionCode": 1,
+      "versionCode": 2,
       "adaptiveIcon": {
-        "backgroundColor": "#0f172a"
+        "backgroundColor": "#F5F8F6"
       },
       "permissions": [
         "READ_MEDIA_IMAGES",
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
+        "ACCESS_MEDIA_LOCATION",
         "VIBRATE"
       ]
     },
