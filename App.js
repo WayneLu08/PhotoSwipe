@@ -215,8 +215,16 @@ export default function App() {
           }
           showToast(`❤️ 已真正收录进系统相册【${FAVORITE_ALBUM}】`, 'success');
         } catch (likeErr) {
-          console.log('添加收藏相册失败:', likeErr);
-          showToast('⚠️ 收藏进相册失败，请检查写入权限', 'warn');
+          console.log('添加收藏相册重试复制模式:', likeErr);
+          try {
+            let favAlbum = await MediaLibrary.getAlbumAsync(FAVORITE_ALBUM);
+            if (favAlbum) {
+              await MediaLibrary.addAssetsToAlbumAsync([photo.id || photo], favAlbum, true);
+              showToast(`❤️ 已收录进系统相册【${FAVORITE_ALBUM}】`, 'success');
+            }
+          } catch (e2) {
+            showToast('⚠️ 收藏进相册失败，请检查写入权限', 'warn');
+          }
         }
       }
 
@@ -235,8 +243,20 @@ export default function App() {
           const albName = albumObj?.title || targetAlbum;
           showToast(`📁 已真正移入系统相册【${albName}】`, 'success');
         } catch (albErr) {
-          console.log('收纳相册失败:', albErr);
-          showToast('⚠️ 归档失败，请检查相册权限', 'warn');
+          console.log('收纳相册重试复制模式:', albErr);
+          try {
+            let albumObj = targetAlbum;
+            if (typeof targetAlbum === 'string') {
+              albumObj = await MediaLibrary.getAlbumAsync(targetAlbum);
+            }
+            if (albumObj) {
+              await MediaLibrary.addAssetsToAlbumAsync([photo.id || photo], albumObj, true);
+              const albName = albumObj?.title || targetAlbum;
+              showToast(`📁 已收纳进系统相册【${albName}】`, 'success');
+            }
+          } catch (e3) {
+            showToast('⚠️ 归档失败，请检查相册权限', 'warn');
+          }
         }
       }
 
@@ -321,12 +341,20 @@ export default function App() {
     swipeCard(0, SCREEN_HEIGHT, 'album', trimmed);
   };
 
-  // 原生 PanResponder 手势监听器（100% 稳定响应每一次触摸）
+  // 原生 PanResponder 手势监听器（100% 独占强力响应每一次触摸与拖拽）
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
       onMoveShouldSetPanResponder: (_, gestureState) => {
-        return Math.abs(gestureState.dx) > 3 || Math.abs(gestureState.dy) > 3;
+        return Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2;
+      },
+      onMoveShouldSetPanResponderCapture: (_, gestureState) => {
+        return Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2;
+      },
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: () => {
+        position.setValue({ x: 0, y: 0 });
       },
       onPanResponderMove: (e, gestureState) => {
         if (isSwiping.current) return;
@@ -360,6 +388,9 @@ export default function App() {
           // 未过阈值复位
           resetPosition();
         }
+      },
+      onPanResponderTerminate: () => {
+        resetPosition();
       }
     })
   ).current;
@@ -489,24 +520,29 @@ export default function App() {
               style={[styles.card, topCardStyle]}
               {...panResponder.panHandlers}
             >
-              <Image source={{ uri: currentPhoto.uri }} style={styles.photo} resizeMode="cover" />
+              <Image
+                source={{ uri: currentPhoto.uri }}
+                style={styles.photo}
+                resizeMode="cover"
+                pointerEvents="none"
+              />
 
               {/* 四向实时提示印章 */}
-              <Animated.View style={[styles.badge, styles.likeBadge, { opacity: likeBadgeOpacity }]}>
+              <Animated.View pointerEvents="none" style={[styles.badge, styles.likeBadge, { opacity: likeBadgeOpacity }]}>
                 <Text style={styles.likeBadgeText}>❤️ 喜欢 (进精选相册)</Text>
               </Animated.View>
-              <Animated.View style={[styles.badge, styles.albumBadge, { opacity: albumBadgeOpacity }]}>
+              <Animated.View pointerEvents="none" style={[styles.badge, styles.albumBadge, { opacity: albumBadgeOpacity }]}>
                 <Text style={styles.albumBadgeText}>📁 归入指定相册</Text>
               </Animated.View>
-              <Animated.View style={[styles.badge, styles.deleteBadge, { opacity: deleteBadgeOpacity }]}>
+              <Animated.View pointerEvents="none" style={[styles.badge, styles.deleteBadge, { opacity: deleteBadgeOpacity }]}>
                 <Text style={styles.deleteBadgeText}>🗑 删除 (移出相册)</Text>
               </Animated.View>
-              <Animated.View style={[styles.badge, styles.keepBadge, { opacity: keepBadgeOpacity }]}>
+              <Animated.View pointerEvents="none" style={[styles.badge, styles.keepBadge, { opacity: keepBadgeOpacity }]}>
                 <Text style={styles.keepBadgeText}>✨ 保留原样</Text>
               </Animated.View>
 
               {/* 底部照片信息 */}
-              <View style={styles.photoInfo}>
+              <View pointerEvents="none" style={styles.photoInfo}>
                 <Text style={styles.photoName} numberOfLines={1}>{currentPhoto.filename || '相册照片'}</Text>
                 <Text style={styles.photoDate}>
                   {currentPhoto.creationTime ? new Date(currentPhoto.creationTime).toLocaleDateString() : '最近拍摄'}
