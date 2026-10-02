@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android APK (Offline Standalone)
 
 on:
   push:
@@ -29,7 +29,6 @@ jobs:
       - name: 验证 Android SDK 环境
         run: |
           echo "ANDROID_HOME: $ANDROID_HOME"
-          ls -ld $ANDROID_HOME
 
       - name: 安装项目依赖
         run: npm install
@@ -37,17 +36,52 @@ jobs:
       - name: 预生成 Android 原生工程 (Prebuild)
         run: npx expo prebuild --platform android --clean --no-install
 
+      - name: 配置离线打包与签名 (解决 unable to load script)
+        run: |
+          # 1. 显式创建 assets 目录并打包离线 JS Bundle
+          mkdir -p android/app/src/main/assets
+          npx react-native bundle \
+            --platform android \
+            --dev false \
+            --entry-file node_modules/expo/AppEntry.js \
+            --bundle-output android/app/src/main/assets/index.android.bundle \
+            --assets-dest android/app/src/main/res \
+            --reset-cache
+
+          # 2. 配置 build.gradle：开启 bundleInDebug，并让 release 构建复用 debug 签名
+          python3 -c "
+          with open('android/app/build.gradle', 'r') as f:
+              content = f.read()
+
+          # 配置 release 自动免密签名 (使用 debug.keystore)
+          if 'signingConfig signingConfigs.debug' not in content:
+              content = content.replace(
+                  'buildTypes {',
+                  'buildTypes {\n        release {\n            signingConfig signingConfigs.debug\n            minifyEnabled false\n            shrinkResources false\n        }'
+              )
+
+          with open('android/app/build.gradle', 'w') as f:
+              f.write(content)
+          "
+
       - name: 赋予 Gradle 执行权限
         run: chmod +x android/gradlew
 
-      - name: 编译 Android APK (assembleDebug)
+      - name: 编译独立离线 Android APK (assembleRelease)
         run: |
           cd android
-          ./gradlew assembleDebug --no-daemon
+          # 编译独立 Release APK，所有离线 JS 与资源均打包固化在安装包内
+          ./gradlew assembleRelease --no-daemon
+
+      - name: 归档并验证生成的 APK
+        run: |
+          mkdir -p release-output
+          cp android/app/build/outputs/apk/release/*.apk release-output/PhotoSwipe-v1.1.0-release.apk
+          ls -lh release-output/
 
       - name: 上传 APK 安装包至 GitHub Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: PhotoSwipe-Android-APK
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: PhotoSwipe-Android-Offline-APK
+          path: release-output/PhotoSwipe-v1.1.0-release.apk
           retention-days: 14
