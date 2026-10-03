@@ -2,7 +2,7 @@
   "expo": {
     "name": "相册管家 · Photomanager",
     "slug": "photoswipe",
-    "version": "2.2.0",
+    "version": "2.2.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -17,7 +17,7 @@
     },
     "android": {
       "package": "com.weiwei.photoswipe",
-      "versionCode": 7,
+      "versionCode": 8,
       "adaptiveIcon": {
         "backgroundColor": "#F4F7F5"
       },

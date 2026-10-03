@@ -55,12 +55,6 @@ export default function App() {
   const [pendingDeletions, setPendingDeletions] = useState([]);
   const [recycleModalVisible, setRecycleModalVisible] = useState(false);
 
-  // 操作二次确认授权弹窗（含“今日不再提醒”免打扰选项）
-  const [confirmModalVisible, setConfirmModalVisible] = useState(false);
-  const [pendingActionType, setPendingActionType] = useState(null); // 'moveToTrash' | 'batchDelete'
-  const [dontRemindToday, setDontRemindToday] = useState(false);
-  const [silentConfirmDate, setSilentConfirmDate] = useState(''); // 记录免打扰日期 'YYYY-MM-DD'
-
   // 月份选择抽屉弹窗
   const [monthModalVisible, setMonthModalVisible] = useState(false);
 
@@ -423,42 +417,8 @@ export default function App() {
     showToast('↩️ 已撤回上一张照片', 'info');
   };
 
-  // 点击【移入相册回收站】或【彻底删除】时的前置拦截（检查“今日不再提醒”免打扰状态）
-  const requestActionWithConfirm = (actionType) => {
-    const today = getTodayDateString();
-    if (silentConfirmDate === today) {
-      // 今日已授权免打扰，直接执行对应的批量操作
-      if (actionType === 'moveToTrash') {
-        executeMoveToTrashAlbum();
-      } else if (actionType === 'batchDelete') {
-        executeBatchDelete();
-      }
-    } else {
-      // 弹出确认弹窗，并提供“今日不再提醒”选项
-      setPendingActionType(actionType);
-      setDontRemindToday(false);
-      setConfirmModalVisible(true);
-    }
-  };
-
-  // 确认弹窗点击【确认允许】
-  const handleConfirmModalProceed = () => {
-    setConfirmModalVisible(false);
-    if (dontRemindToday) {
-      const today = getTodayDateString();
-      setSilentConfirmDate(today);
-      showToast('已开启今日免打扰授权 🍃', 'info');
-    }
-
-    if (pendingActionType === 'moveToTrash') {
-      executeMoveToTrashAlbum();
-    } else if (pendingActionType === 'batchDelete') {
-      executeBatchDelete();
-    }
-    setPendingActionType(null);
-  };
-
-  // 1. 执行【移入系统相册回收站】（直接调用系统原生回收站接口，绝不额外自建相册或产生重复复制）
+  // 1. 执行【移入系统相册回收站】
+  // 零二次弹窗打扰：直接唤起 Android 官方安全确认对话框；成功后移入自带相册回收站（30天可找回）
   const executeMoveToTrashAlbum = async () => {
     if (pendingDeletions.length === 0) return;
 
@@ -473,48 +433,41 @@ export default function App() {
     try {
       setLoading(true);
       const totalCount = realAssets.length;
-      setBatchProgressText(`正在移入系统相册回收站...`);
+      setBatchProgressText(`正在移入系统相册回收站 (${totalCount}张)...`);
 
-      // 纯粹调用系统原生删除接口（在 Android 11+ 上默认行为即是将照片标为 is_trashed=1，移入自带相册回收站保存30天）
-      // 绝不调用 createAlbumAsync / addAssetsToAlbumAsync，杜绝生成冗余相册副本
-      if (totalCount <= BATCH_CHUNK_SIZE) {
-        const ids = realAssets.map(p => p.id || p);
-        try {
-          await MediaLibrary.deleteAssetsAsync(ids);
-        } catch (e1) {
-          await MediaLibrary.deleteAssetsAsync(realAssets);
-        }
-      } else {
-        // 大批量时分批让渡推进，避免 Binder 事务溢出
-        for (let i = 0; i < totalCount; i += BATCH_CHUNK_SIZE) {
-          const chunk = realAssets.slice(i, i + BATCH_CHUNK_SIZE);
-          const chunkIds = chunk.map(p => p.id || p);
-          try {
-            await MediaLibrary.deleteAssetsAsync(chunkIds);
-          } catch (eChunk) {
-            await MediaLibrary.deleteAssetsAsync(chunk);
-          }
-          await new Promise(r => setTimeout(r, 150));
-        }
+      // 一次性提交全部 ID（避免 chunk 循环导致 Android 系统原生 Intent 冲突打断）
+      const idsToDelete = realAssets.map(p => p.id || p);
+      let isSuccess = false;
+      try {
+        isSuccess = await MediaLibrary.deleteAssetsAsync(idsToDelete);
+      } catch (err1) {
+        // 部分 Android 机器若传入 ID 数组失败，尝试直接传 realAssets 对象数组保底
+        isSuccess = await MediaLibrary.deleteAssetsAsync(realAssets);
       }
 
-      showToast(`📥 已成功将 ${pendingDeletions.length} 张照片移入系统自带【回收站】`, 'success');
+      if (isSuccess) {
+        // 系统原生授权确认通过，真实删除/移入回收站成功
+        const processedIdSet = new Set(realAssets.map(p => p.id));
+        setAllPhotos(prev => prev.filter(p => !processedIdSet.has(p.id)));
+        setReviewedPhotoIds(prev => Array.from(new Set([...prev, ...realAssets.map(p => p.id)])));
+        setPendingDeletions([]);
+        setRecycleModalVisible(false);
+        showToast(`📥 成功将 ${realAssets.length} 张照片移入手机自带【回收站】`, 'success');
+      } else {
+        // 用户在系统弹窗中点击了“取消”或拒绝
+        showToast('已取消操作，照片已安全保留', 'info');
+      }
     } catch (err) {
       console.log('移入系统相册回收站捕获提示:', err);
-      showToast('📥 已请求移入系统相册回收站', 'info');
+      showToast('⚠️ 未能完成回收站操作，请检查权限', 'warn');
     } finally {
-      // 核心保障：立即从当前相册与待删箱中彻底清除，并登记到已审阅集合，主界面绝不重复出现
-      const processedIdSet = new Set(pendingDeletions.map(p => p.id));
-      setAllPhotos(prev => prev.filter(p => !processedIdSet.has(p.id)));
-      setReviewedPhotoIds(prev => Array.from(new Set([...prev, ...pendingDeletions.map(p => p.id)])));
-      setPendingDeletions([]);
-      setRecycleModalVisible(false);
       setLoading(false);
       setBatchProgressText('');
     }
   };
 
-  // 2. 执行【彻底删除】（解决点击无反应、照片不变化的 Bug，确保系统级与应用内即时同步生效）
+  // 2. 执行【彻底删除】
+  // 零二次弹窗打扰：直接唤起 Android 官方安全确认对话框；成功后彻底物理粉碎，释放手机存储空间
   const executeBatchDelete = async () => {
     if (pendingDeletions.length === 0) return;
 
@@ -531,38 +484,31 @@ export default function App() {
       const totalCount = realAssets.length;
       setBatchProgressText(`正在执行彻底删除 (${totalCount}张)...`);
 
-      // 调用系统物理删除请求
-      if (totalCount <= BATCH_CHUNK_SIZE) {
-        const ids = realAssets.map(p => p.id || p);
-        try {
-          await MediaLibrary.deleteAssetsAsync(ids);
-        } catch (delErr) {
-          await MediaLibrary.deleteAssetsAsync(realAssets);
-        }
-      } else {
-        for (let i = 0; i < totalCount; i += BATCH_CHUNK_SIZE) {
-          const chunk = realAssets.slice(i, i + BATCH_CHUNK_SIZE);
-          const chunkIds = chunk.map(p => p.id || p);
-          try {
-            await MediaLibrary.deleteAssetsAsync(chunkIds);
-          } catch (eChunk) {
-            await MediaLibrary.deleteAssetsAsync(chunk);
-          }
-          await new Promise(r => setTimeout(r, 150));
-        }
+      // 一次性提交全部 ID
+      const idsToDelete = realAssets.map(p => p.id || p);
+      let isSuccess = false;
+      try {
+        isSuccess = await MediaLibrary.deleteAssetsAsync(idsToDelete);
+      } catch (delErr) {
+        isSuccess = await MediaLibrary.deleteAssetsAsync(realAssets);
       }
 
-      showToast(`🔥 已成功彻底删除 ${realAssets.length} 张照片，空间已释放！`, 'success');
+      if (isSuccess) {
+        // 系统原生授权确认通过，真实删除成功
+        const deletedIdSet = new Set(realAssets.map(p => p.id));
+        setAllPhotos(prev => prev.filter(p => !deletedIdSet.has(p.id)));
+        setReviewedPhotoIds(prev => Array.from(new Set([...prev, ...realAssets.map(p => p.id)])));
+        setPendingDeletions([]);
+        setRecycleModalVisible(false);
+        showToast(`🔥 已成功彻底删除 ${realAssets.length} 张照片，空间已释放！`, 'success');
+      } else {
+        // 用户在系统弹窗中点击了“取消”或拒绝
+        showToast('已取消操作，照片未删除', 'info');
+      }
     } catch (err) {
       console.log('彻底删除执行捕获提示:', err);
-      showToast('🔥 已执行删除并释放存储空间', 'info');
+      showToast('⚠️ 删除操作未能完成，请检查权限', 'warn');
     } finally {
-      // 核心保障：无论底层返回值细节如何，应用内立刻彻底清除这批照片并刷新界面，绝不会发生照片不变化的问题
-      const deletedIdSet = new Set(pendingDeletions.map(p => p.id));
-      setAllPhotos(prev => prev.filter(p => !deletedIdSet.has(p.id)));
-      setReviewedPhotoIds(prev => Array.from(new Set([...prev, ...pendingDeletions.map(p => p.id)])));
-      setPendingDeletions([]);
-      setRecycleModalVisible(false);
       setLoading(false);
       setBatchProgressText('');
     }
@@ -1017,19 +963,19 @@ export default function App() {
                 {/* 选项 1：【移入相册回收站】 */}
                 <TouchableOpacity
                   style={styles.moveToTrashAlbumBtn}
-                  onPress={() => requestActionWithConfirm('moveToTrash')}
+                  onPress={executeMoveToTrashAlbum}
                   activeOpacity={0.8}
                 >
                   <Text style={styles.moveToTrashAlbumBtnText}>
                     📥 【移入相册回收站】
                   </Text>
-                  <Text style={styles.btnSubTipText}>放入手机系统相册回收站 · 随时可找回</Text>
+                  <Text style={styles.btnSubTipText}>放入手机系统相册自带回收站 · 随时可找回</Text>
                 </TouchableOpacity>
 
                 {/* 选项 2：【彻底删除】 */}
                 <TouchableOpacity
                   style={styles.clearAllBtn}
-                  onPress={() => requestActionWithConfirm('batchDelete')}
+                  onPress={executeBatchDelete}
                   activeOpacity={0.8}
                 >
                   <Text style={styles.clearAllBtnText}>
@@ -1037,71 +983,20 @@ export default function App() {
                   </Text>
                   <Text style={styles.clearSubTipText}>永久粉碎照片 · 彻底释放本地磁盘空间</Text>
                 </TouchableOpacity>
+
+                {/* 免打扰与系统单次授权说明 */}
+                <View style={styles.nativeTipContainer}>
+                  <Text style={styles.nativeTipText}>
+                    💡 点击后将直接拉起 Android 官方安全确认（支持单次批量授权），点击“允许”即可完成，无二次弹窗打扰。
+                  </Text>
+                </View>
               </View>
             )}
           </View>
         </View>
       </Modal>
 
-      {/* 弹窗 2：操作确认弹窗（内置“今日不再提醒”免打扰选项） */}
-      <Modal
-        visible={confirmModalVisible}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setConfirmModalVisible(false)}
-      >
-        <View style={styles.confirmModalOverlay}>
-          <View style={styles.confirmCard}>
-            <View style={styles.confirmHeader}>
-              <Text style={styles.confirmIcon}>
-                {pendingActionType === 'moveToTrash' ? '📥' : '⚠️'}
-              </Text>
-              <Text style={styles.confirmTitle}>
-                {pendingActionType === 'moveToTrash' ? '确认移入相册回收站？' : '确认彻底删除照片？'}
-              </Text>
-            </View>
-
-            <Text style={styles.confirmDesc}>
-              {pendingActionType === 'moveToTrash'
-                ? `是否允许将这 ${pendingDeletions.length} 张照片移入手机系统相册自带的【回收站/最近删除】？后续可在系统相册中随时找回。`
-                : `是否允许彻底删除这 ${pendingDeletions.length} 张照片？此操作不可逆，将直接释放手机本地存储空间。`}
-            </Text>
-
-            {/* “今日不再提醒” 选项勾选框 */}
-            <TouchableOpacity
-              style={styles.checkboxRow}
-              onPress={() => setDontRemindToday(!dontRemindToday)}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.checkboxBox, dontRemindToday && styles.checkboxBoxChecked]}>
-                {dontRemindToday && <Text style={styles.checkmarkText}>✓</Text>}
-              </View>
-              <Text style={styles.checkboxLabel}>今日不再提醒（当天免打扰授权）</Text>
-            </TouchableOpacity>
-
-            <View style={styles.confirmActionRow}>
-              <TouchableOpacity
-                style={styles.cancelBtn}
-                onPress={() => setConfirmModalVisible(false)}
-              >
-                <Text style={styles.cancelBtnText}>取消</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.confirmBtn,
-                  pendingActionType === 'batchDelete' ? styles.confirmBtnDanger : styles.confirmBtnSuccess
-                ]}
-                onPress={handleConfirmModalProceed}
-              >
-                <Text style={styles.confirmBtnText}>确认允许</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* 弹窗 3：月份时间线选择抽屉 */}
+      {/* 弹窗 2：月份时间线选择抽屉 */}
       <Modal
         visible={monthModalVisible}
         transparent={true}
@@ -1741,108 +1636,20 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 2
   },
-  confirmModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.6)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 24
-  },
-  confirmCard: {
-    width: '100%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 22,
-    elevation: 10,
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 12
-  },
-  confirmHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12
-  },
-  confirmIcon: {
-    fontSize: 26,
-    marginRight: 10
-  },
-  confirmTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#1E293B'
-  },
-  confirmDesc: {
-    fontSize: 13,
-    color: '#475569',
-    lineHeight: 20,
-    marginBottom: 16
-  },
-  checkboxRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
+  nativeTipContainer: {
+    marginTop: 14,
     paddingHorizontal: 12,
+    paddingVertical: 10,
     backgroundColor: '#F8FAFC',
     borderRadius: 12,
-    marginBottom: 20
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
   },
-  checkboxBox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: '#94A3B8',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10
-  },
-  checkboxBoxChecked: {
-    backgroundColor: '#10B981',
-    borderColor: '#059669'
-  },
-  checkmarkText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '900'
-  },
-  checkboxLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#334155'
-  },
-  confirmActionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end'
-  },
-  cancelBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 12,
-    backgroundColor: '#F1F5F9',
-    marginRight: 10
-  },
-  cancelBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#64748B'
-  },
-  confirmBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 12
-  },
-  confirmBtnSuccess: {
-    backgroundColor: '#059669'
-  },
-  confirmBtnDanger: {
-    backgroundColor: '#EF4444'
-  },
-  confirmBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '800'
+  nativeTipText: {
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 18,
+    textAlign: 'center'
   },
   monthModalContent: {
     backgroundColor: '#FFFFFF',

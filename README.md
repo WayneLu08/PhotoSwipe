@@ -5,14 +5,14 @@
 **四向手势丝滑分类 · 时间胶囊按月攻坚 · 待删回收箱批量清理 · 智能过滤已审阅照片 · 分批防闪退架构**
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-v2.2.0-emerald?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/Version-v2.2.1-emerald?style=flat-square" alt="Version" />
   <img src="https://img.shields.io/badge/Platform-Android%20%7C%20Web-blue?style=flat-square" alt="Platform" />
   <img src="https://img.shields.io/badge/Framework-React%20Native%20%2B%20Expo-61dafb?style=flat-square" alt="Framework" />
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/Build-GitHub%20Actions%20APK-orange?style=flat-square" alt="Build" />
 </p>
 
-[下载最新 APK (v2.2.0)](#-安装包下载) | [中文说明](#chinese) | [English](#english)
+[下载最新 APK (v2.2.1)](#-安装包下载) | [中文说明](#chinese) | [English](#english)
 
 </div>
 
@@ -43,29 +43,25 @@
 
 ---
 
-## 🚀 v2.2.0 核心功能与升级亮点
+## 🚀 v2.2.1 核心修复与升级亮点
 
-1. **待删回收箱双选项规范化**：
-   - 【移入相册回收站】：安全将照片移入系统自带相册【🗑️相册管家-相册回收站】，随时可在手机相册中查看或找回；
-   - 【彻底删除】：永久物理删除并粉碎照片，彻底释放手机本地磁盘空间。
-2. **免打扰机制（今日不再提醒）**：
-   - 触发批量操作时提供贴心确认弹窗，并提供“今日不再提醒”复选框；
-   - 勾选后当天内自动保持授权，避免每次操作频繁弹窗打扰。
-3. **已筛选照片持久排重过滤**：
+1. **彻底解决免打扰与双重弹窗困扰**：
+   - 移除应用前端画蛇添足的自制二次确认弹窗，直通 Android 操作系统原生安全确认对话框；
+   - 彻底消除“应用层问一次 + 系统层又问一次”的双重弹窗体验，单次系统授权即可完成整批操作，流程极其清爽。
+2. **修复底层删除真实生效与状态严格同步**：
+   - 废除引起 Android 原生 Intent 并发冲突的分批切片循环，恢复规范的单批次原子调用；
+   - 严格基于 `MediaLibrary.deleteAssetsAsync` 真实执行结果（系统返回 `isSuccess`）同步更新界面状态；真实删除成功才移除，用户取消则安全保留，彻底杜绝“假删除”与“删除失效退回上一版本”的缺陷。
+3. **无冗余相册副本**：
+   - 移入回收站直接由系统原生相册接管（安全保留30天随时可找回），绝不额外创建冗余相册副本，无需用户二次删除。
+4. **已筛选照片持久排重过滤**：
    - 无论是保留、收藏、归档还是删除，已处理照片均自动加入持久过滤队列；
-   - 执行完回收箱操作返回主界面后，之前保留的照片不会重复出现，无缝衔接下一批未整理相片。
-4. **大批量删除分批防闪退引擎 (Chunked Batch Engine)**：
-   - 针对成百上千张大批量删除，采用 50 张为一组的分片串行推进机制；
-   - 微让渡主线程与释放底层 IPC 缓冲区，彻底解决系统底层 `TransactionTooLargeException` 导致的闪退问题。
-5. **时间胶囊 · 按月整理与专项清理通道**：
-   - 按月时间线分组，逐月攻克相册积压；
-   - 内置“截图专区”与“视频瘦身”快速筛选入口。
+   - 执行完回收箱操作返回主界面后，之前保留的照片绝不重复出现。
 
 ---
 
 ## 📦 安装包下载
 
-- **GitHub Release 直链**：[PhotoManager-v2.2.0.apk](https://github.com/WayneLu08/PhotoSwipe/releases/download/v2.2.0/PhotoManager-v2.2.0.apk)
+- **GitHub Release 直链**：[PhotoManager-v2.2.1.apk](https://github.com/WayneLu08/PhotoSwipe/releases/download/v2.2.1/PhotoManager-v2.2.1.apk)
 - **体积**：~63 MB（独立离线脱机包，内嵌完整 Hermes JSBundle 与资源，开箱即用，免联网免配置）
 
 ---
