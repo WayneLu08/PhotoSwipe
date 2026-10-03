@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   StyleSheet,
   Text,
@@ -14,7 +14,8 @@ import {
   ActivityIndicator,
   Animated,
   PanResponder,
-  TextInput
+  TextInput,
+  ScrollView
 } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import * as Haptics from 'expo-haptics';
@@ -23,45 +24,64 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SWIPE_THRESHOLD = 80;
 const FAVORITE_ALBUM = 'PhotoSwipe-精选喜欢';
 
-// 备用演示相片（在系统无权限或相册为空时保证界面能完整展示体验）
+// 备用精选演示相片（在真机相册为空或权限受限时保底提供丝滑体验）
 const DEMO_PHOTOS = [
-  { id: 'demo-1', uri: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800&q=80', filename: '夏日白沙滩.jpg', creationTime: Date.now() - 86400000 },
-  { id: 'demo-2', uri: 'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=800&q=80', filename: '星空雪山峰.jpg', creationTime: Date.now() - 172800000 },
-  { id: 'demo-3', uri: 'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=800&q=80', filename: '清晨雾中林.jpg', creationTime: Date.now() - 259200000 },
-  { id: 'demo-4', uri: 'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=800&q=80', filename: '森林阳光.jpg', creationTime: Date.now() - 345600000 },
-  { id: 'demo-5', uri: 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&q=80', filename: '峡谷山水.jpg', creationTime: Date.now() - 432000000 },
-  { id: 'demo-6', uri: 'https://images.unsplash.com/photo-1472214103451-9374bd1c798e?w=800&q=80', filename: '绿色田野.jpg', creationTime: Date.now() - 518400000 },
-  { id: 'demo-7', uri: 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=800&q=80', filename: '极简办公桌.jpg', creationTime: Date.now() - 604800000 }
+  { id: 'demo-1', uri: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800&q=80', filename: '夏日白沙滩.jpg', width: 3024, height: 4032, creationTime: Date.now() - 86400000 * 2, mediaType: 'photo' },
+  { id: 'demo-2', uri: 'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=800&q=80', filename: '星空雪山峰.jpg', width: 3840, height: 2160, creationTime: Date.now() - 86400000 * 5, mediaType: 'photo' },
+  { id: 'demo-3', uri: 'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=800&q=80', filename: '清晨雾中林.jpg', width: 2560, height: 1440, creationTime: Date.now() - 86400000 * 12, mediaType: 'photo' },
+  { id: 'demo-4', uri: 'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=800&q=80', filename: '森林阳光.jpg', width: 4000, height: 3000, creationTime: Date.now() - 86400000 * 25, mediaType: 'photo' },
+  { id: 'demo-5', uri: 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&q=80', filename: '峡谷山水.jpg', width: 3840, height: 2400, creationTime: Date.now() - 86400000 * 45, mediaType: 'photo' },
+  { id: 'demo-6', uri: 'https://images.unsplash.com/photo-1472214103451-9374bd1c798e?w=800&q=80', filename: 'Screenshot_20261001.jpg', width: 1080, height: 2400, creationTime: Date.now() - 86400000 * 60, mediaType: 'photo' },
+  { id: 'demo-7', uri: 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=800&q=80', filename: '极简办公桌.jpg', width: 3000, height: 2000, creationTime: Date.now() - 86400000 * 80, mediaType: 'photo' }
 ];
 
 export default function App() {
-  const [photos, setPhotos] = useState([]);
+  // 全部照片池
+  const [allPhotos, setAllPhotos] = useState([]);
+  // 当前过滤队列（依据模式与月份过滤）
+  const [activeQueue, setActiveQueue] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [history, setHistory] = useState([]);
+
+  // 清理模式: 'all' (全部) | 'month' (按月) | 'screenshot' (截图) | 'video' (视频)
+  const [cleanMode, setCleanMode] = useState('all');
+  const [selectedMonthKey, setSelectedMonthKey] = useState(''); // 例如 '2026年9月'
+
+  // 待删回收箱暂存区（解决每次滑动都弹系统删除窗的痛点）
+  const [pendingDeletions, setPendingDeletions] = useState([]);
+  const [recycleModalVisible, setRecycleModalVisible] = useState(false);
+
+  // 月份选择抽屉弹窗
+  const [monthModalVisible, setMonthModalVisible] = useState(false);
+
+  // 相册收纳弹窗
+  const [albumModalVisible, setAlbumModalVisible] = useState(false);
   const [albums, setAlbums] = useState([]);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [pendingPhoto, setPendingPhoto] = useState(null);
   const [newAlbumName, setNewAlbumName] = useState('');
+
+  // 整理历史（用于撤销）
+  const [history, setHistory] = useState([]);
+
+  // 状态与轻量 Toast
   const [loading, setLoading] = useState(true);
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState('info'); // 'info' | 'success' | 'warn'
 
-  // 原生 Animated.ValueXY 驱动，100% 杜绝 Reanimated 在 Android 上的手势失效
+  // 原生 Animated.ValueXY 驱动卡片位移与旋转，零延迟跟手
   const position = useRef(new Animated.ValueXY()).current;
   const isSwiping = useRef(false);
   const toastTimeoutRef = useRef(null);
 
-  // 顶卡引用与索引引用（供 PanResponder 回调闭包准确获取最新状态）
+  // 引用闭包保底（PanResponder 内部安全读取最新状态）
   const currentIndexRef = useRef(0);
-  const photosRef = useRef([]);
+  const activeQueueRef = useRef([]);
 
   useEffect(() => {
     currentIndexRef.current = currentIndex;
   }, [currentIndex]);
 
   useEffect(() => {
-    photosRef.current = photos;
-  }, [photos]);
+    activeQueueRef.current = activeQueue;
+  }, [activeQueue]);
 
   // 显示顶部轻量通知
   const showToast = (msg, type = 'info') => {
@@ -80,46 +100,43 @@ export default function App() {
   const initApp = async () => {
     setLoading(true);
     try {
-      // 申请相册读写权限
       const perm = await MediaLibrary.requestPermissionsAsync(false);
-      const isGranted = perm.status === 'granted';
-
-      if (isGranted) {
-        await loadPhotos();
-        await loadAlbums();
+      if (perm.status === 'granted') {
+        await loadMediaLibrary();
       } else {
-        setPhotos(DEMO_PHOTOS);
-        showToast('⚠️ 未获得相册权限，当前为演示相片', 'warn');
+        setAllPhotos(DEMO_PHOTOS);
+        showToast('⚠️ 未获得相册权限，已加载精选演示照片', 'warn');
       }
     } catch (e) {
-      console.log('权限初始化失败:', e);
-      setPhotos(DEMO_PHOTOS);
+      console.log('权限初始化异常:', e);
+      setAllPhotos(DEMO_PHOTOS);
     } finally {
       setLoading(false);
     }
   };
 
-  // 全面加载系统相册照片
-  const loadPhotos = async () => {
+  // 全面拉取系统照片与视频
+  const loadMediaLibrary = async () => {
     try {
       setLoading(true);
-      let photoList = [];
+      let mediaItems = [];
 
-      // 1. 常规拉取最多 500 张照片
+      // 1. 读取系统照片与视频 (最多拉取 1000 项)
       try {
         const assets = await MediaLibrary.getAssetsAsync({
-          first: 500,
-          mediaType: ['photo']
+          first: 1000,
+          mediaType: ['photo', 'video'],
+          sortBy: [[MediaLibrary.SortBy.creationTime, false]]
         });
         if (assets && assets.assets && assets.assets.length > 0) {
-          photoList = assets.assets;
+          mediaItems = assets.assets;
         }
       } catch (err) {
-        console.log('一级相册拉取失败，尝试降级:', err);
+        console.log('主要相册拉取失败，尝试相册遍历兜底:', err);
       }
 
       // 2. 遍历各子相册（Camera, DCIM, Pictures）兜底
-      if (photoList.length === 0) {
+      if (mediaItems.length === 0) {
         try {
           const userAlbums = await MediaLibrary.getAlbumsAsync();
           for (const alb of userAlbums) {
@@ -127,49 +144,94 @@ export default function App() {
               const albAssets = await MediaLibrary.getAssetsAsync({
                 album: alb,
                 first: 100,
-                mediaType: ['photo']
+                mediaType: ['photo', 'video']
               });
-              if (albAssets && albAssets.assets && albAssets.assets.length > 0) {
-                photoList = [...photoList, ...albAssets.assets];
+              if (albAssets?.assets?.length > 0) {
+                mediaItems = [...mediaItems, ...albAssets.assets];
               }
             }
           }
-        } catch (err) {
-          console.log('遍历相册拉取失败:', err);
+        } catch (err2) {
+          console.log('相册遍历异常:', err2);
         }
       }
 
-      // 3. 兜底保护：若手机无照片或仅 1 张，补充演示照片确保能体验连续滑动
-      if (photoList.length === 0) {
-        photoList = DEMO_PHOTOS;
-        showToast('相册为空，已加载精选演示照片', 'info');
+      if (mediaItems.length === 0) {
+        mediaItems = DEMO_PHOTOS;
+        showToast('相册为空，已载入演示相片 🍃', 'info');
       }
 
-      setPhotos(photoList);
-      setCurrentIndex(0);
-      showToast(`已加载 ${photoList.length} 张照片 🍃`, 'success');
+      setAllPhotos(mediaItems);
+      await loadAlbums();
+      showToast(`已加载 ${mediaItems.length} 项相册文件 🍃`, 'success');
     } catch (e) {
-      console.log('读取照片异常:', e);
-      setPhotos(DEMO_PHOTOS);
+      console.log('媒体读取错误:', e);
+      setAllPhotos(DEMO_PHOTOS);
     } finally {
       setLoading(false);
     }
   };
 
-  // 加载手机相册列表
+  // 读取系统所有相册
   const loadAlbums = async () => {
     try {
       const userAlbums = await MediaLibrary.getAlbumsAsync();
       setAlbums(userAlbums || []);
     } catch (e) {
-      console.log('读取相册列表失败:', e);
+      console.log('读取相册列表错误:', e);
     }
   };
 
+  // 计算月份时间胶囊聚合列表
+  const monthGroups = useMemo(() => {
+    const groups = {};
+    allPhotos.forEach(p => {
+      const t = p.creationTime ? new Date(p.creationTime) : new Date();
+      const key = `${t.getFullYear()}年${t.getMonth() + 1}月`;
+      if (!groups[key]) {
+        groups[key] = { key, count: 0, photos: [] };
+      }
+      groups[key].count += 1;
+      groups[key].photos.push(p);
+    });
+    return Object.values(groups);
+  }, [allPhotos]);
+
+  // 根据当前选择的模式更新 activeQueue
+  useEffect(() => {
+    let filtered = [];
+    if (cleanMode === 'all') {
+      filtered = allPhotos;
+    } else if (cleanMode === 'month') {
+      const found = monthGroups.find(g => g.key === selectedMonthKey);
+      filtered = found ? found.photos : allPhotos;
+    } else if (cleanMode === 'screenshot') {
+      // 截图筛选: 文件名含 screenshot/截屏/screenshot
+      filtered = allPhotos.filter(p => {
+        const name = (p.filename || '').toLowerCase();
+        return name.includes('screenshot') || name.includes('截屏') || name.includes('截图');
+      });
+      if (filtered.length === 0) {
+        showToast('未检测到屏幕截图，显示全部照片', 'info');
+        filtered = allPhotos;
+      }
+    } else if (cleanMode === 'video') {
+      // 视频筛选
+      filtered = allPhotos.filter(p => p.mediaType === 'video' || (p.filename || '').endsWith('.mp4'));
+      if (filtered.length === 0) {
+        showToast('相册中未发现视频，显示全部照片', 'info');
+        filtered = allPhotos;
+      }
+    }
+    setActiveQueue(filtered);
+    setCurrentIndex(0);
+    setHistory([]);
+  }, [allPhotos, cleanMode, selectedMonthKey, monthGroups]);
+
   // 触觉反馈
-  const triggerHaptic = (type) => {
+  const triggerHaptic = (action) => {
     try {
-      if (type === 'delete') {
+      if (action === 'delete') {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       } else {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -177,80 +239,92 @@ export default function App() {
     } catch (e) {}
   };
 
-  // 核心：真实系统相册联动逻辑
-  const executeSystemMediaAction = async (action, photo, targetAlbum = null) => {
-    if (!photo || (photo.id && String(photo.id).startsWith('demo-'))) {
-      if (action === 'delete') showToast('🗑 [演示] 已删除当前照片', 'warn');
-      if (action === 'like') showToast('❤️ [演示] 已收藏至精选相册', 'success');
-      if (action === 'keep') showToast('✨ [演示] 已保留在相册', 'info');
-      if (action === 'album') showToast(`📁 [演示] 已归档至「${targetAlbum?.title || targetAlbum}」`, 'success');
-      return;
+  // 格式化日期展示
+  const formatPhotoDate = (timestamp) => {
+    if (!timestamp) return '近期拍摄';
+    const d = new Date(timestamp);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const h = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    return `${y}-${m}-${day} ${h}:${min}`;
+  };
+
+  // 执行核心动作
+  const handleAction = async (action, targetAlbum = null) => {
+    const idx = currentIndexRef.current;
+    const currentPhoto = activeQueueRef.current[idx];
+    if (!currentPhoto) return;
+
+    triggerHaptic(action);
+
+    // 记录历史供撤销
+    setHistory(prev => [...prev, { photo: currentPhoto, action, album: targetAlbum, index: idx }]);
+
+    // 1. 左滑：加入待删除回收箱（不打断手势，避免频繁弹窗）
+    if (action === 'delete') {
+      setPendingDeletions(prev => {
+        if (!prev.some(p => p.id === currentPhoto.id)) {
+          return [...prev, currentPhoto];
+        }
+        return prev;
+      });
+      showToast('🗑 已放入待删回收箱 (可随时撤回)', 'warn');
     }
 
-    try {
-      // 1. 真删除：调用 MediaLibrary.deleteAssetsAsync
-      if (action === 'delete') {
-        try {
-          const success = await MediaLibrary.deleteAssetsAsync([photo.id || photo]);
-          if (success) {
-            showToast('🗑 已真正从系统相册删除', 'warn');
-          } else {
-            showToast('⚠️ 未确认删除或权限限制', 'info');
-          }
-        } catch (delErr) {
-          console.log('删除异常或用户取消:', delErr);
-          showToast('⚠️ 删除已取消或未完成', 'info');
-        }
-      }
-
-      // 2. 真收藏：联动系统专属相册「PhotoSwipe-精选喜欢」
-      else if (action === 'like') {
+    // 2. 上滑：真实收藏（写入系统相册）
+    else if (action === 'like') {
+      if (!String(currentPhoto.id).startsWith('demo-')) {
         try {
           let favAlbum = await MediaLibrary.getAlbumAsync(FAVORITE_ALBUM);
           if (!favAlbum) {
-            favAlbum = await MediaLibrary.createAlbumAsync(FAVORITE_ALBUM, photo.id || photo, false);
+            favAlbum = await MediaLibrary.createAlbumAsync(FAVORITE_ALBUM, currentPhoto.id || currentPhoto, false);
             await loadAlbums();
           } else {
-            await MediaLibrary.addAssetsToAlbumAsync([photo.id || photo], favAlbum, false);
+            await MediaLibrary.addAssetsToAlbumAsync([currentPhoto.id || currentPhoto], favAlbum, false);
           }
-          showToast(`❤️ 已真正收录进系统相册【${FAVORITE_ALBUM}】`, 'success');
+          showToast(`❤️ 已收藏收录至系统相册【${FAVORITE_ALBUM}】`, 'success');
         } catch (likeErr) {
-          console.log('添加收藏相册重试复制模式:', likeErr);
+          // 降级复制模式
           try {
             let favAlbum = await MediaLibrary.getAlbumAsync(FAVORITE_ALBUM);
             if (favAlbum) {
-              await MediaLibrary.addAssetsToAlbumAsync([photo.id || photo], favAlbum, true);
-              showToast(`❤️ 已收录进系统相册【${FAVORITE_ALBUM}】`, 'success');
+              await MediaLibrary.addAssetsToAlbumAsync([currentPhoto.id || currentPhoto], favAlbum, true);
+              showToast(`❤️ 已收藏至系统相册【${FAVORITE_ALBUM}】`, 'success');
             }
           } catch (e2) {
-            showToast('⚠️ 收藏进相册失败，请检查写入权限', 'warn');
+            showToast('⚠️ 收藏写入失败，请检查写入权限', 'warn');
           }
         }
+      } else {
+        showToast('❤️ [演示] 已加入精选收藏相册', 'success');
       }
+    }
 
-      // 3. 真归档：存入用户指定系统相册
-      else if (action === 'album' && targetAlbum) {
+    // 3. 下滑：真实归档到指定相册
+    else if (action === 'album' && targetAlbum) {
+      if (!String(currentPhoto.id).startsWith('demo-')) {
         try {
           let albumObj = targetAlbum;
           if (typeof targetAlbum === 'string') {
             albumObj = await MediaLibrary.getAlbumAsync(targetAlbum);
             if (!albumObj) {
-              albumObj = await MediaLibrary.createAlbumAsync(targetAlbum, photo.id || photo, false);
+              albumObj = await MediaLibrary.createAlbumAsync(targetAlbum, currentPhoto.id || currentPhoto, false);
             }
           }
-          await MediaLibrary.addAssetsToAlbumAsync([photo.id || photo], albumObj, false);
+          await MediaLibrary.addAssetsToAlbumAsync([currentPhoto.id || currentPhoto], albumObj, false);
           await loadAlbums();
           const albName = albumObj?.title || targetAlbum;
           showToast(`📁 已真正移入系统相册【${albName}】`, 'success');
         } catch (albErr) {
-          console.log('收纳相册重试复制模式:', albErr);
           try {
             let albumObj = targetAlbum;
             if (typeof targetAlbum === 'string') {
               albumObj = await MediaLibrary.getAlbumAsync(targetAlbum);
             }
             if (albumObj) {
-              await MediaLibrary.addAssetsToAlbumAsync([photo.id || photo], albumObj, true);
+              await MediaLibrary.addAssetsToAlbumAsync([currentPhoto.id || currentPhoto], albumObj, true);
               const albName = albumObj?.title || targetAlbum;
               showToast(`📁 已收纳进系统相册【${albName}】`, 'success');
             }
@@ -258,43 +332,28 @@ export default function App() {
             showToast('⚠️ 归档失败，请检查相册权限', 'warn');
           }
         }
+      } else {
+        showToast(`📁 [演示] 已归档至「${targetAlbum?.title || targetAlbum}」`, 'success');
       }
-
-      // 4. 真保留：留在手机原相册不动
-      else if (action === 'keep') {
-        showToast('✨ 已保留在原相册', 'info');
-      }
-    } catch (e) {
-      console.log('执行相册操作异常:', e);
     }
-  };
 
-  // 处理手势划出或按钮触发动作
-  const handleAction = (action, targetAlbum = null) => {
-    const idx = currentIndexRef.current;
-    const currentPhoto = photosRef.current[idx];
-    if (!currentPhoto) return;
+    // 4. 右滑：保留在相册
+    else if (action === 'keep') {
+      showToast('✨ 已保留在相册', 'info');
+    }
 
-    triggerHaptic(action);
-
-    // 记录历史供反悔/撤销
-    setHistory(prev => [...prev, { photo: currentPhoto, action, album: targetAlbum, index: idx }]);
-
-    // 执行真实系统相册操作
-    executeSystemMediaAction(action, currentPhoto, targetAlbum);
-
-    // 推进到下一张
+    // 递增索引进入下一张卡片
     setCurrentIndex(prev => prev + 1);
   };
 
-  // 划出动画（按钮点击或手势飞出）
+  // 卡片划走动画
   const swipeCard = (targetX, targetY, action, targetAlbum = null) => {
     if (isSwiping.current) return;
     isSwiping.current = true;
 
     Animated.timing(position, {
       toValue: { x: targetX, y: targetY },
-      duration: 200,
+      duration: 180,
       useNativeDriver: false
     }).start(() => {
       handleAction(action, targetAlbum);
@@ -307,41 +366,83 @@ export default function App() {
   const resetPosition = () => {
     Animated.spring(position, {
       toValue: { x: 0, y: 0 },
-      friction: 5,
-      tension: 40,
+      friction: 6,
+      tension: 45,
       useNativeDriver: false
     }).start();
   };
 
-  // 撤销上一步
+  // 撤销上一步（Undo）
   const handleUndo = () => {
     if (history.length === 0 || currentIndex === 0) {
-      Alert.alert('提示', '当前没有可撤销的操作哦 🐱');
+      showToast('当前没有可撤销的操作 🐱', 'info');
       return;
     }
     const lastOp = history[history.length - 1];
+    // 若上一张是放入待删箱，则将其从待删箱移出
     if (lastOp.action === 'delete') {
-      Alert.alert('提示', '该照片已从手机相册真正删除，无法在本地恢复 🐱');
+      setPendingDeletions(prev => prev.filter(p => p.id !== lastOp.photo.id));
     }
+
     setHistory(prev => prev.slice(0, -1));
     setCurrentIndex(prev => prev - 1);
     position.setValue({ x: 0, y: 0 });
-    showToast('已撤销上一步', 'info');
+    showToast('↩️ 已撤回上一张照片', 'info');
   };
 
-  // 创建新相册并收纳
+  // 一键彻底清空/删除待删箱（只弹一次系统原生授权对话框，最畅快的体验）
+  const handleConfirmBatchDelete = async () => {
+    if (pendingDeletions.length === 0) return;
+
+    const realAssets = pendingDeletions.filter(p => !String(p.id).startsWith('demo-'));
+    if (realAssets.length === 0) {
+      setPendingDeletions([]);
+      setRecycleModalVisible(false);
+      showToast('🗑 [演示] 已彻底清空待删除照片', 'success');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const idsToDelete = realAssets.map(p => p.id || p);
+      const isSuccess = await MediaLibrary.deleteAssetsAsync(idsToDelete);
+      if (isSuccess) {
+        showToast(`🎉 成功永久释放 ${pendingDeletions.length} 张照片空间！`, 'success');
+        // 从全量列表中移除已删除项
+        const deletedIdSet = new Set(pendingDeletions.map(p => p.id));
+        setAllPhotos(prev => prev.filter(p => !deletedIdSet.has(p.id)));
+        setPendingDeletions([]);
+        setRecycleModalVisible(false);
+      } else {
+        showToast('⚠️ 未确认授权删除', 'info');
+      }
+    } catch (err) {
+      console.log('批量删除取消或异常:', err);
+      showToast('⚠️ 删除操作已取消或失败', 'warn');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 从待删箱移出单张照片
+  const handleRemoveFromTrash = (photoId) => {
+    setPendingDeletions(prev => prev.filter(p => p.id !== photoId));
+    showToast('已从待删箱恢复', 'info');
+  };
+
+  // 新建相册并归档
   const handleCreateAndArchive = async () => {
     const trimmed = newAlbumName.trim();
     if (!trimmed) {
       Alert.alert('提示', '请输入新相册名称');
       return;
     }
-    setModalVisible(false);
+    setAlbumModalVisible(false);
     setNewAlbumName('');
     swipeCard(0, SCREEN_HEIGHT, 'album', trimmed);
   };
 
-  // 原生 PanResponder 手势监听器（100% 独占强力响应每一次触摸与拖拽）
+  // 原生独占手势监听
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -368,24 +469,22 @@ export default function App() {
 
         if (absY > absX && absY > SWIPE_THRESHOLD) {
           if (dy < -SWIPE_THRESHOLD) {
-            // ⬆ 上滑：喜欢
+            // ⬆ 上滑：收藏喜欢
             swipeCard(0, -SCREEN_HEIGHT * 1.2, 'like');
           } else {
-            // ⬇ 下滑：收纳相册弹窗
+            // ⬇ 下滑：收纳到相册
             resetPosition();
-            setPendingPhoto(photosRef.current[currentIndexRef.current]);
-            setModalVisible(true);
+            setAlbumModalVisible(true);
           }
         } else if (absX > SWIPE_THRESHOLD) {
           if (dx < -SWIPE_THRESHOLD) {
-            // ⬅ 左滑：删除
+            // ⬅ 左滑：待删箱
             swipeCard(-SCREEN_WIDTH * 1.5, 0, 'delete');
           } else {
-            // ➡ 右滑：保留
+            // ➡ 右滑：保留在相册
             swipeCard(SCREEN_WIDTH * 1.5, 0, 'keep');
           }
         } else {
-          // 未过阈值复位
           resetPosition();
         }
       },
@@ -395,10 +494,10 @@ export default function App() {
     })
   ).current;
 
-  // 顶层活动卡片旋转动画
+  // 顶层卡片微倾角旋转
   const rotate = position.x.interpolate({
     inputRange: [-SCREEN_WIDTH * 1.5, 0, SCREEN_WIDTH * 1.5],
-    outputRange: ['-24deg', '0deg', '24deg'],
+    outputRange: ['-22deg', '0deg', '22deg'],
     extrapolate: 'clamp'
   });
 
@@ -409,19 +508,19 @@ export default function App() {
     ]
   };
 
-  // 底层备用卡片跟随平滑放大（Tinder 双层 Deck）
+  // 底层卡片平滑层叠
   const bottomCardScale = position.x.interpolate({
     inputRange: [-SWIPE_THRESHOLD * 2, 0, SWIPE_THRESHOLD * 2],
-    outputRange: [1, 0.94, 1],
+    outputRange: [1, 0.95, 1],
     extrapolate: 'clamp'
   });
   const bottomCardOpacity = position.x.interpolate({
     inputRange: [-SWIPE_THRESHOLD * 2, 0, SWIPE_THRESHOLD * 2],
-    outputRange: [1, 0.85, 1],
+    outputRange: [1, 0.88, 1],
     extrapolate: 'clamp'
   });
 
-  // 四向印章透明度渐变
+  // 四向徽章透明度插值
   const likeBadgeOpacity = position.y.interpolate({
     inputRange: [-100, -25, 0],
     outputRange: [1, 0.5, 0],
@@ -443,38 +542,98 @@ export default function App() {
     extrapolate: 'clamp'
   });
 
-  const currentPhoto = photos[currentIndex];
-  const nextPhoto = currentIndex + 1 < photos.length ? photos[currentIndex + 1] : null;
+  const currentPhoto = activeQueue[currentIndex];
+  const nextPhoto = currentIndex + 1 < activeQueue.length ? activeQueue[currentIndex + 1] : null;
+  const isCompleted = activeQueue.length > 0 && currentIndex >= activeQueue.length;
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F5F8F6" />
+      <StatusBar barStyle="dark-content" backgroundColor="#F4F7F5" />
 
-      {/* 顶部状态栏与清新计数 */}
+      {/* 顶部主导航栏 */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <View style={styles.logoBadge}>
-            <Text style={styles.logoBadgeText}>🍃</Text>
+          <View style={styles.brandIcon}>
+            <Text style={styles.brandEmoji}>🍃</Text>
           </View>
           <View>
-            <Text style={styles.title}>PhotoSwipe</Text>
-            <Text style={styles.subTitle}>系统相册实时联动版</Text>
+            <View style={styles.brandRow}>
+              <Text style={styles.brandTitle}>轻相册</Text>
+              <View style={styles.brandTag}>
+                <Text style={styles.brandTagText}>PhotoSwipe</Text>
+              </View>
+            </View>
+            <Text style={styles.brandSubtitle}>滑动整理 · 让相册轻一点</Text>
           </View>
         </View>
 
+        {/* 右侧：待删回收箱与计数 */}
         <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.refreshBtn} onPress={loadPhotos} activeOpacity={0.7}>
-            <Text style={styles.refreshBtnText}>🔄 重新扫描</Text>
+          <TouchableOpacity
+            style={[styles.trashBadge, pendingDeletions.length > 0 && styles.trashBadgeActive]}
+            onPress={() => setRecycleModalVisible(true)}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.trashBadgeText}>🗑 {pendingDeletions.length}</Text>
           </TouchableOpacity>
-          <View style={styles.counterPill}>
-            <Text style={styles.counterText}>
-              {photos.length > 0 ? `${currentIndex + 1} / ${photos.length}` : '0 / 0'}
-            </Text>
-          </View>
+
+          <TouchableOpacity style={styles.refreshIconBtn} onPress={loadMediaLibrary} activeOpacity={0.7}>
+            <Text style={styles.refreshIconText}>🔄</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
-      {/* 浮动实时操作通知 Toast */}
+      {/* 清理模式快捷选项卡 (致敬《轻相册》时间线与分类胶囊) */}
+      <View style={styles.modeTabsWrapper}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.modeTabsContent}>
+          <TouchableOpacity
+            style={[styles.modeTab, cleanMode === 'all' && styles.modeTabActive]}
+            onPress={() => setCleanMode('all')}
+          >
+            <Text style={[styles.modeTabText, cleanMode === 'all' && styles.modeTabTextActive]}>🌟 全部照片</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.modeTab, cleanMode === 'month' && styles.modeTabActive]}
+            onPress={() => setMonthModalVisible(true)}
+          >
+            <Text style={[styles.modeTabText, cleanMode === 'month' && styles.modeTabTextActive]}>
+              📅 {selectedMonthKey || '按月整理'} ▾
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.modeTab, cleanMode === 'screenshot' && styles.modeTabActive]}
+            onPress={() => setCleanMode('screenshot')}
+          >
+            <Text style={[styles.modeTabText, cleanMode === 'screenshot' && styles.modeTabTextActive]}>📸 截图专区</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.modeTab, cleanMode === 'video' && styles.modeTabActive]}
+            onPress={() => setCleanMode('video')}
+          >
+            <Text style={[styles.modeTabText, cleanMode === 'video' && styles.modeTabTextActive]}>🎥 视频瘦身</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+
+      {/* 进度条指示器 */}
+      <View style={styles.progressContainer}>
+        <View style={styles.progressBarBg}>
+          <View
+            style={[
+              styles.progressBarFill,
+              { width: activeQueue.length > 0 ? `${Math.min(100, (currentIndex / activeQueue.length) * 100)}%` : '0%' }
+            ]}
+          />
+        </View>
+        <Text style={styles.progressText}>
+          {activeQueue.length > 0 ? `${currentIndex} / ${activeQueue.length}` : '0 / 0'}
+        </Text>
+      </View>
+
+      {/* 悬浮操作提示 Toast */}
       {toastMessage !== '' && (
         <View style={[
           styles.toastContainer,
@@ -484,16 +643,48 @@ export default function App() {
         </View>
       )}
 
-      {/* 卡片主操作区 (双层卡片堆叠 Dual Deck) */}
-      <View style={styles.deck}>
+      {/* 卡片工作区 */}
+      <View style={styles.cardArea}>
         {loading ? (
-          <View style={styles.loadingBox}>
+          <View style={styles.emptyContainer}>
             <ActivityIndicator size="large" color="#10B981" />
-            <Text style={styles.loadingText}>正在扫描系统相册...</Text>
+            <Text style={styles.emptyTip}>正在扫描整理相册...</Text>
           </View>
-        ) : currentIndex < photos.length && currentPhoto ? (
-          <View style={styles.stackWrapper}>
-            {/* 底层卡片：下一张照片预先常驻在下方，顶卡划走时平滑顶上 */}
+        ) : isCompleted ? (
+          /* 当前阶段全部整理完成卡片 */
+          <View style={styles.completedCard}>
+            <Text style={styles.completedEmoji}>🎉</Text>
+            <Text style={styles.completedTitle}>当前相册已整理完毕！</Text>
+            <Text style={styles.completedSubtitle}>
+              本次共审阅了 {activeQueue.length} 项，待删箱暂存了 {pendingDeletions.length} 张照片
+            </Text>
+
+            {pendingDeletions.length > 0 && (
+              <TouchableOpacity
+                style={styles.oneClickDeleteBtn}
+                onPress={() => setRecycleModalVisible(true)}
+              >
+                <Text style={styles.oneClickDeleteBtnText}>🚀 前往待删箱一键永久释放</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={styles.switchOtherMonthBtn}
+              onPress={() => setMonthModalVisible(true)}
+            >
+              <Text style={styles.switchOtherMonthBtnText}>📅 切换其他月份继续整理</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.restartBtn}
+              onPress={() => { setCurrentIndex(0); setHistory([]); }}
+            >
+              <Text style={styles.restartBtnText}>↺ 重新温习本组照片</Text>
+            </TouchableOpacity>
+          </View>
+        ) : currentPhoto ? (
+          <View style={styles.deckContainer}>
+            {/* 底层备用卡片 */}
             {nextPhoto && (
               <Animated.View
                 style={[
@@ -504,181 +695,287 @@ export default function App() {
                     opacity: bottomCardOpacity
                   }
                 ]}
+                pointerEvents="none"
               >
-                <Image source={{ uri: nextPhoto.uri }} style={styles.photo} resizeMode="cover" />
-                <View style={styles.photoInfo}>
-                  <Text style={styles.photoName} numberOfLines={1}>{nextPhoto.filename || '下一张照片'}</Text>
-                  <Text style={styles.photoDate}>
-                    {nextPhoto.creationTime ? new Date(nextPhoto.creationTime).toLocaleDateString() : '相册照片'}
-                  </Text>
+                <Image source={{ uri: nextPhoto.uri }} style={styles.cardImage} resizeMode="cover" />
+                <View style={styles.cardInfoFooter}>
+                  <Text style={styles.cardDateText}>{formatPhotoDate(nextPhoto.creationTime)}</Text>
+                  <Text style={styles.cardDimText}>下一张准备就绪</Text>
                 </View>
               </Animated.View>
             )}
 
-            {/* 顶层活动卡片：绑定原生 PanResponder 手势 */}
+            {/* 顶层活动卡片 */}
             <Animated.View
               style={[styles.card, topCardStyle]}
               {...panResponder.panHandlers}
             >
               <Image
                 source={{ uri: currentPhoto.uri }}
-                style={styles.photo}
+                style={styles.cardImage}
                 resizeMode="cover"
                 pointerEvents="none"
               />
 
-              {/* 四向实时提示印章 */}
-              <Animated.View pointerEvents="none" style={[styles.badge, styles.likeBadge, { opacity: likeBadgeOpacity }]}>
-                <Text style={styles.likeBadgeText}>❤️ 喜欢 (进精选相册)</Text>
-              </Animated.View>
-              <Animated.View pointerEvents="none" style={[styles.badge, styles.albumBadge, { opacity: albumBadgeOpacity }]}>
-                <Text style={styles.albumBadgeText}>📁 归入指定相册</Text>
-              </Animated.View>
-              <Animated.View pointerEvents="none" style={[styles.badge, styles.deleteBadge, { opacity: deleteBadgeOpacity }]}>
-                <Text style={styles.deleteBadgeText}>🗑 删除 (移出相册)</Text>
-              </Animated.View>
-              <Animated.View pointerEvents="none" style={[styles.badge, styles.keepBadge, { opacity: keepBadgeOpacity }]}>
-                <Text style={styles.keepBadgeText}>✨ 保留原样</Text>
+              {/* 四个方向半透明浮层徽章 */}
+              <Animated.View style={[styles.badge, styles.likeBadge, { opacity: likeBadgeOpacity }]} pointerEvents="none">
+                <Text style={styles.badgeText}>❤️ 收藏精选</Text>
               </Animated.View>
 
-              {/* 底部照片信息 */}
-              <View pointerEvents="none" style={styles.photoInfo}>
-                <Text style={styles.photoName} numberOfLines={1}>{currentPhoto.filename || '相册照片'}</Text>
-                <Text style={styles.photoDate}>
-                  {currentPhoto.creationTime ? new Date(currentPhoto.creationTime).toLocaleDateString() : '最近拍摄'}
-                </Text>
+              <Animated.View style={[styles.badge, styles.albumBadge, { opacity: albumBadgeOpacity }]} pointerEvents="none">
+                <Text style={styles.badgeText}>📁 归档相册</Text>
+              </Animated.View>
+
+              <Animated.View style={[styles.badge, styles.deleteBadge, { opacity: deleteBadgeOpacity }]} pointerEvents="none">
+                <Text style={styles.badgeText}>🗑 移入待删</Text>
+              </Animated.View>
+
+              <Animated.View style={[styles.badge, styles.keepBadge, { opacity: keepBadgeOpacity }]} pointerEvents="none">
+                <Text style={styles.badgeText}>✨ 留在相册</Text>
+              </Animated.View>
+
+              {/* 照片底部元数据条 */}
+              <View style={styles.cardInfoFooter} pointerEvents="none">
+                <View>
+                  <Text style={styles.cardDateText}>{formatPhotoDate(currentPhoto.creationTime)}</Text>
+                  <Text style={styles.cardDimText}>
+                    {currentPhoto.filename ? currentPhoto.filename.slice(-18) : '照片'} · {currentPhoto.width && currentPhoto.height ? `${currentPhoto.width}×${currentPhoto.height}` : 'HD'}
+                  </Text>
+                </View>
+                <View style={styles.gestureIndicatorPill}>
+                  <Text style={styles.gestureIndicatorText}>可四向滑动 👆</Text>
+                </View>
               </View>
             </Animated.View>
           </View>
         ) : (
           <View style={styles.emptyContainer}>
-            <View style={styles.emptyIconCircle}>
-              <Text style={{ fontSize: 44 }}>✨</Text>
-            </View>
-            <Text style={styles.emptyTitle}>全部整理完毕！</Text>
-            <Text style={styles.emptySubtitle}>您已完成了相册所有照片的整理 🐱</Text>
-            <TouchableOpacity style={styles.restartBtn} onPress={() => setCurrentIndex(0)} activeOpacity={0.75}>
-              <Text style={styles.restartBtnText}>🔄 从头再次整理</Text>
-            </TouchableOpacity>
+            <Text style={styles.emptyEmoji}>🍃</Text>
+            <Text style={styles.emptyTip}>当前分类没有找到照片哦</Text>
           </View>
         )}
       </View>
 
-      {/* 底部操作胶囊栏 */}
-      <View style={styles.controls}>
-        <TouchableOpacity style={[styles.btn, styles.undoBtn]} onPress={handleUndo} activeOpacity={0.75}>
-          <Text style={styles.undoBtnIcon}>↩</Text>
-          <Text style={styles.undoBtnText}>反悔</Text>
+      {/* 底部 5 大核心操作按钮 (支持一键撤销、手势或点按操作) */}
+      <View style={styles.actionToolbar}>
+        {/* 撤销 (Undo) */}
+        <TouchableOpacity
+          style={[styles.toolBtn, styles.undoBtn, history.length === 0 && styles.btnDisabled]}
+          onPress={handleUndo}
+          activeOpacity={0.7}
+          disabled={history.length === 0}
+        >
+          <Text style={styles.toolBtnEmoji}>↩️</Text>
+          <Text style={styles.toolBtnLabel}>撤销</Text>
         </TouchableOpacity>
 
+        {/* 左滑删除 */}
         <TouchableOpacity
-          style={[styles.btn, styles.deleteBtn]}
+          style={[styles.toolBtn, styles.deleteBtn]}
           onPress={() => swipeCard(-SCREEN_WIDTH * 1.5, 0, 'delete')}
-          activeOpacity={0.75}
+          activeOpacity={0.7}
         >
-          <Text style={styles.deleteBtnIcon}>🗑</Text>
-          <Text style={styles.deleteBtnText}>左滑删</Text>
+          <Text style={styles.toolBtnEmoji}>🗑</Text>
+          <Text style={styles.toolBtnLabel}>待删</Text>
         </TouchableOpacity>
 
+        {/* 下滑归档 */}
         <TouchableOpacity
-          style={[styles.btn, styles.albumBtn]}
-          onPress={() => {
-            setPendingPhoto(photos[currentIndex]);
-            setModalVisible(true);
-          }}
-          activeOpacity={0.75}
+          style={[styles.toolBtn, styles.albumBtn]}
+          onPress={() => setAlbumModalVisible(true)}
+          activeOpacity={0.7}
         >
-          <Text style={styles.albumBtnIcon}>📁</Text>
-          <Text style={styles.albumBtnText}>下滑存</Text>
+          <Text style={styles.toolBtnEmoji}>📁</Text>
+          <Text style={styles.toolBtnLabel}>归档</Text>
         </TouchableOpacity>
 
+        {/* 右滑保留 */}
         <TouchableOpacity
-          style={[styles.btn, styles.likeBtn]}
-          onPress={() => swipeCard(0, -SCREEN_HEIGHT * 1.2, 'like')}
-          activeOpacity={0.75}
-        >
-          <Text style={styles.likeBtnIcon}>❤️</Text>
-          <Text style={styles.likeBtnText}>上滑爱</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.btn, styles.keepBtn]}
+          style={[styles.toolBtn, styles.keepBtn]}
           onPress={() => swipeCard(SCREEN_WIDTH * 1.5, 0, 'keep')}
-          activeOpacity={0.75}
+          activeOpacity={0.7}
         >
-          <Text style={styles.keepBtnIcon}>✨</Text>
-          <Text style={styles.keepBtnText}>右滑留</Text>
+          <Text style={styles.toolBtnEmoji}>✨</Text>
+          <Text style={styles.toolBtnLabel}>保留</Text>
+        </TouchableOpacity>
+
+        {/* 上滑收藏 */}
+        <TouchableOpacity
+          style={[styles.toolBtn, styles.likeBtn]}
+          onPress={() => swipeCard(0, -SCREEN_HEIGHT * 1.2, 'like')}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.toolBtnEmoji}>❤️</Text>
+          <Text style={styles.toolBtnLabel}>喜欢</Text>
         </TouchableOpacity>
       </View>
 
-      {/* 相册归档抽屉弹窗 */}
-      <Modal visible={modalVisible} transparent animationType="slide">
+      {/* 弹窗 1：待删除回收箱审阅弹窗 (集中审阅与一次性批量清除) */}
+      <Modal
+        visible={recycleModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setRecycleModalVisible(false)}
+      >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <View style={styles.modalIndicator} />
-              <Text style={styles.modalTitle}>选择或新建归档相册</Text>
-              <Text style={styles.modalDesc}>将当前照片真正归纳进系统图库相册</Text>
+          <View style={styles.recycleModalContent}>
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalHeaderTitle}>待删回收箱</Text>
+                <Text style={styles.modalHeaderSub}>
+                  已标记 {pendingDeletions.length} 张照片 · 预估可释放约 {(pendingDeletions.length * 3.2).toFixed(1)} MB 空间
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setRecycleModalVisible(false)}>
+                <Text style={styles.modalCloseText}>✕</Text>
+              </TouchableOpacity>
             </View>
 
-            {/* 快捷新建相册输入栏 */}
-            <View style={styles.createAlbumRow}>
+            {pendingDeletions.length === 0 ? (
+              <View style={styles.recycleEmptyBox}>
+                <Text style={styles.recycleEmptyEmoji}>🌱</Text>
+                <Text style={styles.recycleEmptyText}>回收箱是空的，滑动时左滑即可暂存到这里</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={pendingDeletions}
+                keyExtractor={(item, index) => item.id || String(index)}
+                numColumns={3}
+                style={styles.recycleGrid}
+                renderItem={({ item }) => (
+                  <View style={styles.recycleGridItem}>
+                    <Image source={{ uri: item.uri }} style={styles.recycleThumb} />
+                    <TouchableOpacity
+                      style={styles.restoreItemBadge}
+                      onPress={() => handleRemoveFromTrash(item.id)}
+                    >
+                      <Text style={styles.restoreItemBadgeText}>恢复</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              />
+            )}
+
+            {pendingDeletions.length > 0 && (
+              <View style={styles.recycleFooter}>
+                <TouchableOpacity
+                  style={styles.clearAllBtn}
+                  onPress={handleConfirmBatchDelete}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.clearAllBtnText}>
+                    🔥 一键彻底释放 {pendingDeletions.length} 张照片空间
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* 弹窗 2：月份时间线选择抽屉 */}
+      <Modal
+        visible={monthModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setMonthModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.monthModalContent}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalHeaderTitle}>选择整理月份</Text>
+              <TouchableOpacity onPress={() => setMonthModalVisible(false)}>
+                <Text style={styles.modalCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <FlatList
+              data={monthGroups}
+              keyExtractor={item => item.key}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[
+                    styles.monthOptionRow,
+                    selectedMonthKey === item.key && styles.monthOptionRowActive
+                  ]}
+                  onPress={() => {
+                    setSelectedMonthKey(item.key);
+                    setCleanMode('month');
+                    setMonthModalVisible(false);
+                    showToast(`已切换至【${item.key}】整理队列`, 'success');
+                  }}
+                >
+                  <View style={styles.monthOptionLeft}>
+                    <Text style={styles.monthCalendarEmoji}>📅</Text>
+                    <Text style={styles.monthOptionTitle}>{item.key}</Text>
+                  </View>
+                  <View style={styles.monthCountBadge}>
+                    <Text style={styles.monthCountBadgeText}>{item.count} 张</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {/* 弹窗 3：收纳相册抽屉 */}
+      <Modal
+        visible={albumModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setAlbumModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.albumModalContent}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalHeaderTitle}>收纳归档到系统相册</Text>
+              <TouchableOpacity onPress={() => setAlbumModalVisible(false)}>
+                <Text style={styles.modalCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* 新建相册输入框 */}
+            <View style={styles.newAlbumBox}>
               <TextInput
                 style={styles.newAlbumInput}
-                placeholder="新建相册名称 (如: 旅行、美食)..."
+                placeholder="新建相册名称 (如: 旅行/美食/工作)"
                 placeholderTextColor="#94A3B8"
                 value={newAlbumName}
                 onChangeText={setNewAlbumName}
               />
-              <TouchableOpacity
-                style={styles.createAlbumBtn}
-                onPress={handleCreateAndArchive}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.createAlbumBtnText}>➕ 创建并存入</Text>
+              <TouchableOpacity style={styles.newAlbumBtn} onPress={handleCreateAndArchive}>
+                <Text style={styles.newAlbumBtnText}>新建并归档</Text>
               </TouchableOpacity>
             </View>
 
-            {/* 既有相册列表 */}
+            <Text style={styles.sectionTitle}>或选择现有系统相册：</Text>
+
             <FlatList
               data={albums}
-              keyExtractor={(item) => item.id}
-              showsVerticalScrollIndicator={false}
+              keyExtractor={(item, index) => item.id || String(index)}
+              style={{ maxHeight: 240 }}
               renderItem={({ item }) => (
                 <TouchableOpacity
                   style={styles.albumItem}
-                  activeOpacity={0.7}
                   onPress={() => {
-                    setModalVisible(false);
+                    setAlbumModalVisible(false);
                     swipeCard(0, SCREEN_HEIGHT, 'album', item);
                   }}
                 >
-                  <View style={styles.albumItemLeft}>
-                    <View style={styles.albumIconBox}>
-                      <Text style={{ fontSize: 18 }}>🗂</Text>
-                    </View>
-                    <Text style={styles.albumTitle}>{item.title}</Text>
+                  <Text style={styles.albumItemEmoji}>📁</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.albumItemName}>{item.title}</Text>
+                    <Text style={styles.albumItemCount}>{item.assetCount || 0} 项</Text>
                   </View>
-                  <Text style={styles.albumCount}>{item.assetCount || 0} 张</Text>
+                  <Text style={styles.albumItemArrow}>›</Text>
                 </TouchableOpacity>
               )}
-              ListEmptyComponent={
-                <View style={{ paddingVertical: 18, alignItems: 'center' }}>
-                  <Text style={{ color: '#94A3B8', fontSize: 13 }}>暂无自定义相册，可直接在上方创建新相册</Text>
-                </View>
-              }
             />
-
-            <TouchableOpacity
-              style={styles.cancelBtn}
-              onPress={() => setModalVisible(false)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.cancelText}>取消</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </Modal>
+
     </SafeAreaView>
   );
 }
@@ -686,412 +983,614 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F8F6'
+    backgroundColor: '#F4F7F5'
   },
   header: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingTop: 8,
-    paddingBottom: 6,
-    alignItems: 'center'
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 6
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center'
   },
-  logoBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: '#E6F4EA',
-    justifyContent: 'center',
+  brandIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#ECFDF5',
     alignItems: 'center',
-    marginRight: 10
+    justifyContent: 'center',
+    marginRight: 10,
+    borderWidth: 1,
+    borderColor: '#A7F3D0'
   },
-  logoBadgeText: {
-    fontSize: 18
+  brandEmoji: {
+    fontSize: 22
   },
-  title: {
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  brandTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#134E4A'
+    color: '#064E3B'
   },
-  subTitle: {
+  brandTag: {
+    marginLeft: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    backgroundColor: '#E6FFFA',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#34D399'
+  },
+  brandTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#059669'
+  },
+  brandSubtitle: {
     fontSize: 11,
-    color: '#64748B',
+    color: '#6B7280',
     marginTop: 1
   },
   headerRight: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8
+    alignItems: 'center'
   },
-  refreshBtn: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 14
-  },
-  refreshBtnText: {
-    fontSize: 12,
-    color: '#059669',
-    fontWeight: '600'
-  },
-  counterPill: {
-    backgroundColor: '#E6F4EA',
+  trashBadge: {
     paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 16
+    paddingVertical: 6,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 20,
+    marginRight: 8
   },
-  counterText: {
-    fontSize: 12,
-    color: '#047857',
-    fontWeight: '700'
-  },
-  toastContainer: {
-    marginHorizontal: 16,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginVertical: 4
-  },
-  toastInfo: {
-    backgroundColor: '#F0FDF4',
+  trashBadgeActive: {
+    backgroundColor: '#FEE2E2',
     borderWidth: 1,
-    borderColor: '#BBF7D0'
+    borderColor: '#FCA5A5'
   },
-  toastSuccess: {
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1,
-    borderColor: '#6EE7B7'
-  },
-  toastWarn: {
-    backgroundColor: '#FFF1F2',
-    borderWidth: 1,
-    borderColor: '#FECDD3'
-  },
-  toastText: {
+  trashBadgeText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#065F46'
+    color: '#EF4444'
   },
-  deck: {
-    flex: 1,
-    justifyContent: 'center',
+  refreshIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 3
+  },
+  refreshIconText: {
+    fontSize: 16
+  },
+  modeTabsWrapper: {
+    marginTop: 4,
+    marginBottom: 4
+  },
+  modeTabsContent: {
     paddingHorizontal: 16,
+    paddingVertical: 4
+  },
+  modeTab: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0'
+  },
+  modeTabActive: {
+    backgroundColor: '#10B981',
+    borderColor: '#059669'
+  },
+  modeTabText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569'
+  },
+  modeTabTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700'
+  },
+  progressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
     marginVertical: 4
   },
-  loadingBox: {
+  progressBarBg: {
+    flex: 1,
+    height: 6,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginRight: 10
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#10B981',
+    borderRadius: 3
+  },
+  progressText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B'
+  },
+  toastContainer: {
+    position: 'absolute',
+    top: 110,
+    alignSelf: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    zIndex: 999,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 6
+  },
+  toastInfo: {
+    backgroundColor: '#334155'
+  },
+  toastSuccess: {
+    backgroundColor: '#059669'
+  },
+  toastWarn: {
+    backgroundColor: '#DC2626'
+  },
+  toastText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600'
+  },
+  cardArea: {
+    flex: 1,
     alignItems: 'center',
-    gap: 12
-  },
-  loadingText: {
-    color: '#64748B',
-    fontSize: 13
-  },
-  stackWrapper: {
-    width: SCREEN_WIDTH - 32,
-    height: SCREEN_HEIGHT * 0.65,
-    position: 'relative',
     justifyContent: 'center',
-    alignItems: 'center'
+    paddingHorizontal: 16,
+    marginVertical: 6
+  },
+  deckContainer: {
+    width: SCREEN_WIDTH - 32,
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center'
   },
   card: {
     position: 'absolute',
     width: '100%',
     height: '100%',
-    backgroundColor: '#FFFFFF',
     borderRadius: 24,
+    backgroundColor: '#FFFFFF',
     overflow: 'hidden',
-    shadowColor: '#0F766E',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
     elevation: 6,
-    borderWidth: 1,
-    borderColor: '#E2E8F0'
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12
   },
   bottomCard: {
     zIndex: 1
   },
-  photo: {
-    flex: 1,
+  cardImage: {
     width: '100%',
-    backgroundColor: '#EDF2F0'
+    flex: 1,
+    backgroundColor: '#F1F5F9'
+  },
+  cardInfoFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderColor: '#F1F5F9'
+  },
+  cardDateText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#1E293B'
+  },
+  cardDimText: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2
+  },
+  gestureIndicatorPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    backgroundColor: '#ECFDF5'
+  },
+  gestureIndicatorText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#059669'
   },
   badge: {
     position: 'absolute',
     paddingHorizontal: 18,
     paddingVertical: 8,
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 2,
-    zIndex: 99
+    zIndex: 10
   },
   likeBadge: {
-    top: 24,
+    top: 30,
     alignSelf: 'center',
-    backgroundColor: 'rgba(255, 241, 242, 0.95)',
-    borderColor: '#FB7185'
-  },
-  likeBadgeText: {
-    color: '#E11D48',
-    fontWeight: '800',
-    fontSize: 16
+    borderColor: '#F43F5E',
+    backgroundColor: 'rgba(255, 241, 242, 0.95)'
   },
   albumBadge: {
-    bottom: 90,
+    bottom: 80,
     alignSelf: 'center',
-    backgroundColor: 'rgba(236, 253, 245, 0.95)',
-    borderColor: '#34D399'
-  },
-  albumBadgeText: {
-    color: '#059669',
-    fontWeight: '800',
-    fontSize: 16
+    borderColor: '#0284C7',
+    backgroundColor: 'rgba(240, 249, 255, 0.95)'
   },
   deleteBadge: {
-    top: 24,
-    right: 20,
-    backgroundColor: 'rgba(255, 241, 242, 0.95)',
-    borderColor: '#F87171'
-  },
-  deleteBadgeText: {
-    color: '#DC2626',
-    fontWeight: '800',
-    fontSize: 16
+    top: 40,
+    right: 30,
+    borderColor: '#EF4444',
+    backgroundColor: 'rgba(254, 242, 242, 0.95)'
   },
   keepBadge: {
-    top: 24,
-    left: 20,
-    backgroundColor: 'rgba(240, 249, 255, 0.95)',
-    borderColor: '#38BDF8'
+    top: 40,
+    left: 30,
+    borderColor: '#10B981',
+    backgroundColor: 'rgba(236, 253, 245, 0.95)'
   },
-  keepBadgeText: {
-    color: '#0284C7',
-    fontWeight: '800',
-    fontSize: 16
+  badgeText: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0F172A'
   },
-  photoInfo: {
+  actionToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.96)',
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9'
-  },
-  photoName: {
-    color: '#1E293B',
-    fontSize: 15,
-    fontWeight: '700'
-  },
-  photoDate: {
-    color: '#94A3B8',
-    fontSize: 12,
-    marginTop: 2
-  },
-  emptyContainer: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 30
-  },
-  emptyIconCircle: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: '#E6F4EA',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 14
-  },
-  emptyTitle: {
-    color: '#134E4A',
-    fontSize: 20,
-    fontWeight: '700'
-  },
-  emptySubtitle: {
-    color: '#64748B',
-    fontSize: 13,
-    marginTop: 6,
-    textAlign: 'center'
-  },
-  restartBtn: {
-    marginTop: 18,
-    backgroundColor: '#10B981',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 20
-  },
-  restartBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 14
-  },
-  controls: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 6,
-    paddingBottom: 18
-  },
-  btn: {
-    flex: 1,
-    marginHorizontal: 3,
-    paddingVertical: 9,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  undoBtn: {
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1,
-    borderColor: '#E2E8F0'
-  },
-  undoBtnIcon: { fontSize: 16, color: '#64748B' },
-  undoBtnText: { fontSize: 11, fontWeight: '700', color: '#64748B', marginTop: 2 },
-
-  deleteBtn: {
-    backgroundColor: '#FFF1F2',
-    borderWidth: 1,
-    borderColor: '#FECDD3'
-  },
-  deleteBtnIcon: { fontSize: 16 },
-  deleteBtnText: { fontSize: 11, fontWeight: '700', color: '#E11D48', marginTop: 2 },
-
-  albumBtn: {
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1,
-    borderColor: '#A7F3D0'
-  },
-  albumBtnIcon: { fontSize: 16 },
-  albumBtnText: { fontSize: 11, fontWeight: '700', color: '#059669', marginTop: 2 },
-
-  likeBtn: {
-    backgroundColor: '#FFF1F2',
-    borderWidth: 1,
-    borderColor: '#FBCFE8'
-  },
-  likeBtnIcon: { fontSize: 16 },
-  likeBtnText: { fontSize: 11, fontWeight: '700', color: '#DB2777', marginTop: 2 },
-
-  keepBtn: {
-    backgroundColor: '#F0F9FF',
-    borderWidth: 1,
-    borderColor: '#BAE6FD'
-  },
-  keepBtnIcon: { fontSize: 16 },
-  keepBtnText: { fontSize: 11, fontWeight: '700', color: '#0284C7', marginTop: 2 },
-
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.4)',
-    justifyContent: 'flex-end'
-  },
-  modalContent: {
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 28,
-    maxHeight: '70%'
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 8
   },
-  modalHeader: {
+  toolBtn: {
     alignItems: 'center',
-    marginBottom: 14
+    justifyContent: 'center',
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: '#F8FAFC',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 4
   },
-  modalIndicator: {
-    width: 36,
-    height: 4,
-    backgroundColor: '#CBD5E1',
-    borderRadius: 2,
+  undoBtn: {
+    backgroundColor: '#F1F5F9'
+  },
+  deleteBtn: {
+    backgroundColor: '#FEE2E2',
+    borderColor: '#FCA5A5',
+    borderWidth: 1
+  },
+  albumBtn: {
+    backgroundColor: '#E0F2FE',
+    borderColor: '#BAE6FD',
+    borderWidth: 1
+  },
+  keepBtn: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#86EFAC',
+    borderWidth: 1
+  },
+  likeBtn: {
+    backgroundColor: '#FFE4E6',
+    borderColor: '#FECDD3',
+    borderWidth: 1
+  },
+  btnDisabled: {
+    opacity: 0.35
+  },
+  toolBtnEmoji: {
+    fontSize: 20
+  },
+  toolBtnLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    marginTop: 1,
+    color: '#475569'
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  emptyEmoji: {
+    fontSize: 54,
+    marginBottom: 10
+  },
+  emptyTip: {
+    fontSize: 14,
+    color: '#64748B',
+    fontWeight: '600'
+  },
+  completedCard: {
+    width: SCREEN_WIDTH - 40,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8
+  },
+  completedEmoji: {
+    fontSize: 56,
     marginBottom: 12
   },
-  modalTitle: {
-    color: '#0F172A',
-    fontSize: 17,
+  completedTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#064E3B',
+    marginBottom: 6
+  },
+  completedSubtitle: {
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center',
+    marginBottom: 20
+  },
+  oneClickDeleteBtn: {
+    width: '100%',
+    paddingVertical: 14,
+    backgroundColor: '#EF4444',
+    borderRadius: 16,
+    alignItems: 'center',
+    marginBottom: 12
+  },
+  oneClickDeleteBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '800'
+  },
+  switchOtherMonthBtn: {
+    width: '100%',
+    paddingVertical: 12,
+    backgroundColor: '#ECFDF5',
+    borderRadius: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#10B981',
+    marginBottom: 10
+  },
+  switchOtherMonthBtnText: {
+    color: '#059669',
+    fontSize: 14,
     fontWeight: '700'
   },
-  modalDesc: {
-    color: '#94A3B8',
-    fontSize: 12,
-    marginTop: 2
+  restartBtn: {
+    paddingVertical: 8
   },
-  createAlbumRow: {
+  restartBtnText: {
+    color: '#64748B',
+    fontSize: 13
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    justifyContent: 'flex-end'
+  },
+  recycleModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 20,
+    maxHeight: SCREEN_HEIGHT * 0.8
+  },
+  modalHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'space-between',
+    marginBottom: 14
+  },
+  modalHeaderTitle: {
+    fontSize: 19,
+    fontWeight: '800',
+    color: '#1E293B'
+  },
+  modalHeaderSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2
+  },
+  modalCloseText: {
+    fontSize: 20,
+    color: '#94A3B8',
+    padding: 4
+  },
+  recycleEmptyBox: {
+    paddingVertical: 40,
+    alignItems: 'center'
+  },
+  recycleEmptyEmoji: {
+    fontSize: 48,
+    marginBottom: 8
+  },
+  recycleEmptyText: {
+    fontSize: 13,
+    color: '#94A3B8'
+  },
+  recycleGrid: {
+    maxHeight: SCREEN_HEIGHT * 0.45
+  },
+  recycleGridItem: {
+    flex: 1 / 3,
+    aspectRatio: 1,
+    margin: 4,
+    borderRadius: 12,
+    overflow: 'hidden',
+    position: 'relative'
+  },
+  recycleThumb: {
+    width: '100%',
+    height: '100%'
+  },
+  restoreItemBadge: {
+    position: 'absolute',
+    bottom: 4,
+    right: 4,
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8
+  },
+  restoreItemBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '700'
+  },
+  recycleFooter: {
+    marginTop: 14
+  },
+  clearAllBtn: {
+    backgroundColor: '#DC2626',
+    paddingVertical: 14,
+    borderRadius: 16,
+    alignItems: 'center'
+  },
+  clearAllBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '800'
+  },
+  monthModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 20,
+    maxHeight: SCREEN_HEIGHT * 0.7
+  },
+  monthOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    marginBottom: 8
+  },
+  monthOptionRowActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#34D399',
+    borderWidth: 1.5
+  },
+  monthOptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  monthCalendarEmoji: {
+    fontSize: 18,
+    marginRight: 10
+  },
+  monthOptionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1E293B'
+  },
+  monthCountBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 12
+  },
+  monthCountBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569'
+  },
+  albumModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 20,
+    maxHeight: SCREEN_HEIGHT * 0.75
+  },
+  newAlbumBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginBottom: 14
   },
   newAlbumInput: {
     flex: 1,
-    height: 42,
-    backgroundColor: '#F8FAF9',
+    height: 44,
+    backgroundColor: '#F1F5F9',
     borderRadius: 12,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    fontSize: 13,
-    color: '#1E293B'
-  },
-  createAlbumBtn: {
-    backgroundColor: '#10B981',
     paddingHorizontal: 14,
-    height: 42,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center'
+    fontSize: 13,
+    color: '#1E293B',
+    marginRight: 8
   },
-  createAlbumBtnText: {
+  newAlbumBtn: {
+    height: 44,
+    backgroundColor: '#059669',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  newAlbumBtnText: {
     color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  sectionTitle: {
+    fontSize: 13,
     fontWeight: '700',
-    fontSize: 13
+    color: '#64748B',
+    marginBottom: 8
   },
   albumItem: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 13,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-    backgroundColor: '#F8FAF9',
-    marginBottom: 8
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderColor: '#F1F5F9'
   },
-  albumItemLeft: {
-    flexDirection: 'row',
-    alignItems: 'center'
+  albumItemEmoji: {
+    fontSize: 22,
+    marginRight: 12
   },
-  albumIconBox: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: '#E6F4EA',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10
-  },
-  albumTitle: {
-    color: '#1E293B',
+  albumItemName: {
     fontSize: 14,
-    fontWeight: '600'
-  },
-  albumCount: {
-    color: '#64748B',
-    fontSize: 12
-  },
-  cancelBtn: {
-    marginTop: 10,
-    paddingVertical: 13,
-    alignItems: 'center',
-    backgroundColor: '#F1F5F9',
-    borderRadius: 16
-  },
-  cancelText: {
-    color: '#475569',
     fontWeight: '700',
-    fontSize: 14
+    color: '#1E293B'
+  },
+  albumItemCount: {
+    fontSize: 11,
+    color: '#94A3B8'
+  },
+  albumItemArrow: {
+    fontSize: 20,
+    color: '#CBD5E1'
   }
 });
