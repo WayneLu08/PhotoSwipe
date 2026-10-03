@@ -80,12 +80,12 @@ jobs:
       - name: 归档并验证生成的 APK
         run: |
           mkdir -p release-output
-          cp android/app/build/outputs/apk/release/*.apk release-output/PhotoSwipe-v2.1.0.apk
+          cp android/app/build/outputs/apk/release/*.apk release-output/PhotoManager-v2.2.0.apk
           ls -lh release-output/
 
       - name: 上传 APK 安装包至 GitHub Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: PhotoSwipe-Android-Offline-APK-v2.1.0
-          path: release-output/PhotoSwipe-v2.1.0.apk
+          name: PhotoManager-Android-Offline-APK-v2.2.0
+          path: release-output/PhotoManager-v2.2.0.apk
           retention-days: 14

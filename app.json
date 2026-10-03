@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "PhotoSwipe · 轻相册",
+    "name": "相册管家 · Photomanager",
     "slug": "photoswipe",
-    "version": "2.1.0",
+    "version": "2.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -17,7 +17,7 @@
     },
     "android": {
       "package": "com.weiwei.photoswipe",
-      "versionCode": 6,
+      "versionCode": 7,
       "adaptiveIcon": {
         "backgroundColor": "#F4F7F5"
       },
@@ -34,8 +34,8 @@
       [
         "expo-media-library",
         {
-          "photosPermission": "允许 PhotoSwipe 访问您的照片以进行滑动整理与分类",
-          "savePhotosPermission": "允许 PhotoSwipe 将照片归档至指定相册",
+          "photosPermission": "允许 相册管家 访问您的照片以进行滑动整理与分类",
+          "savePhotosPermission": "允许 相册管家 将照片归档至指定相册",
           "isAccessMediaLocationEnabled": true
         }
       ]

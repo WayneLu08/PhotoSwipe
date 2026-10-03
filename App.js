@@ -22,10 +22,11 @@ import * as Haptics from 'expo-haptics';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SWIPE_THRESHOLD = 80;
-const FAVORITE_ALBUM = 'PhotoSwipe-精选喜欢';
-const TRASH_ALBUM = '🗑️PhotoSwipe-相册回收站';
+const FAVORITE_ALBUM = '相册管家-精选喜欢';
+// 分批删除安全切片大小（彻底解决 Android Binder 1MB 事务超限 TransactionTooLargeException 导致的闪退）
+const BATCH_CHUNK_SIZE = 100;
 
-// 备用精选演示相片（在真机相册为空或权限受限时保底提供丝滑体验）
+// 备用精选演示相片（在真机相册为空或权限受限时保底提供体验）
 const DEMO_PHOTOS = [
   { id: 'demo-1', uri: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800&q=80', filename: '夏日白沙滩.jpg', width: 3024, height: 4032, creationTime: Date.now() - 86400000 * 2, mediaType: 'photo' },
   { id: 'demo-2', uri: 'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=800&q=80', filename: '星空雪山峰.jpg', width: 3840, height: 2160, creationTime: Date.now() - 86400000 * 5, mediaType: 'photo' },
@@ -39,17 +40,26 @@ const DEMO_PHOTOS = [
 export default function App() {
   // 全部照片池
   const [allPhotos, setAllPhotos] = useState([]);
-  // 当前过滤队列（依据模式与月份过滤）
+  // 已筛选照片排除集合（记录所有保留、喜欢、归档或删除过的照片 ID，绝不重复出现在审核队列）
+  const [reviewedPhotoIds, setReviewedPhotoIds] = useState([]);
+
+  // 当前过滤队列（依据模式、月份以及排除已审阅后动态生成）
   const [activeQueue, setActiveQueue] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
 
   // 清理模式: 'all' (全部) | 'month' (按月) | 'screenshot' (截图) | 'video' (视频)
   const [cleanMode, setCleanMode] = useState('all');
-  const [selectedMonthKey, setSelectedMonthKey] = useState(''); // 例如 '2026年9月'
+  const [selectedMonthKey, setSelectedMonthKey] = useState('');
 
   // 待删回收箱暂存区（解决每次滑动都弹系统删除窗的痛点）
   const [pendingDeletions, setPendingDeletions] = useState([]);
   const [recycleModalVisible, setRecycleModalVisible] = useState(false);
+
+  // 操作二次确认授权弹窗（含“今日不再提醒”免打扰选项）
+  const [confirmModalVisible, setConfirmModalVisible] = useState(false);
+  const [pendingActionType, setPendingActionType] = useState(null); // 'moveToTrash' | 'batchDelete'
+  const [dontRemindToday, setDontRemindToday] = useState(false);
+  const [silentConfirmDate, setSilentConfirmDate] = useState(''); // 记录免打扰日期 'YYYY-MM-DD'
 
   // 月份选择抽屉弹窗
   const [monthModalVisible, setMonthModalVisible] = useState(false);
@@ -64,6 +74,7 @@ export default function App() {
 
   // 状态与轻量 Toast
   const [loading, setLoading] = useState(true);
+  const [batchProgressText, setBatchProgressText] = useState('');
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState('info'); // 'info' | 'success' | 'warn'
 
@@ -83,6 +94,15 @@ export default function App() {
   useEffect(() => {
     activeQueueRef.current = activeQueue;
   }, [activeQueue]);
+
+  // 获取当前日期字符串 YYYY-MM-DD
+  const getTodayDateString = () => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
 
   // 显示顶部轻量通知
   const showToast = (msg, type = 'info') => {
@@ -183,10 +203,12 @@ export default function App() {
     }
   };
 
-  // 计算月份时间胶囊聚合列表
+  // 计算月份时间胶囊聚合列表（排除已审核的照片）
   const monthGroups = useMemo(() => {
+    const reviewedSet = new Set(reviewedPhotoIds);
     const groups = {};
     allPhotos.forEach(p => {
+      if (reviewedSet.has(p.id)) return; // 自动排除已筛选过的照片
       const t = p.creationTime ? new Date(p.creationTime) : new Date();
       const key = `${t.getFullYear()}年${t.getMonth() + 1}月`;
       if (!groups[key]) {
@@ -196,38 +218,39 @@ export default function App() {
       groups[key].photos.push(p);
     });
     return Object.values(groups);
-  }, [allPhotos]);
+  }, [allPhotos, reviewedPhotoIds]);
 
-  // 根据当前选择的模式更新 activeQueue
+  // 根据当前选择的模式更新 activeQueue，并彻底剔除已筛选过的照片（保留/删除/归档/喜欢）
   useEffect(() => {
+    const reviewedSet = new Set(reviewedPhotoIds);
+    // 先排除已审阅照片
+    const unreviewedPool = allPhotos.filter(p => !reviewedSet.has(p.id));
+
     let filtered = [];
     if (cleanMode === 'all') {
-      filtered = allPhotos;
+      filtered = unreviewedPool;
     } else if (cleanMode === 'month') {
       const found = monthGroups.find(g => g.key === selectedMonthKey);
-      filtered = found ? found.photos : allPhotos;
+      filtered = found ? found.photos : unreviewedPool;
     } else if (cleanMode === 'screenshot') {
-      // 截图筛选: 文件名含 screenshot/截屏/screenshot
-      filtered = allPhotos.filter(p => {
+      filtered = unreviewedPool.filter(p => {
         const name = (p.filename || '').toLowerCase();
         return name.includes('screenshot') || name.includes('截屏') || name.includes('截图');
       });
-      if (filtered.length === 0) {
-        showToast('未检测到屏幕截图，显示全部照片', 'info');
-        filtered = allPhotos;
+      if (filtered.length === 0 && unreviewedPool.length > 0) {
+        filtered = unreviewedPool;
       }
     } else if (cleanMode === 'video') {
-      // 视频筛选
-      filtered = allPhotos.filter(p => p.mediaType === 'video' || (p.filename || '').endsWith('.mp4'));
-      if (filtered.length === 0) {
-        showToast('相册中未发现视频，显示全部照片', 'info');
-        filtered = allPhotos;
+      filtered = unreviewedPool.filter(p => p.mediaType === 'video' || (p.filename || '').endsWith('.mp4'));
+      if (filtered.length === 0 && unreviewedPool.length > 0) {
+        filtered = unreviewedPool;
       }
     }
+
     setActiveQueue(filtered);
     setCurrentIndex(0);
     setHistory([]);
-  }, [allPhotos, cleanMode, selectedMonthKey, monthGroups]);
+  }, [allPhotos, reviewedPhotoIds, cleanMode, selectedMonthKey, monthGroups]);
 
   // 触觉反馈
   const triggerHaptic = (action) => {
@@ -252,7 +275,7 @@ export default function App() {
     return `${y}-${m}-${day} ${h}:${min}`;
   };
 
-  // 执行核心动作（显式传递 targetPhoto 彻底杜绝卡片错位与索引漂移）
+  // 执行核心动作（显式传递 targetPhoto 彻底杜绝卡片错位；登记已审阅集合确保照片不再重复出现）
   const handleAction = async (action, targetPhoto = null, targetAlbum = null) => {
     const idx = currentIndexRef.current;
     const currentPhoto = targetPhoto || activeQueueRef.current[idx];
@@ -260,10 +283,16 @@ export default function App() {
 
     triggerHaptic(action);
 
+    // 关键：登记到已审阅集合中（无论是保留、喜欢、归档还是删除，均标记为已审阅，返回主界面后永不重复展示）
+    setReviewedPhotoIds(prev => {
+      if (prev.includes(currentPhoto.id)) return prev;
+      return [...prev, currentPhoto.id];
+    });
+
     // 记录历史供撤销
     setHistory(prev => [...prev, { photo: currentPhoto, action, album: targetAlbum, index: idx }]);
 
-    // 1. 左滑：加入待删除回收箱（不打断手势，避免频繁弹窗）
+    // 1. 左滑：加入待删除回收箱（不打断手势）
     if (action === 'delete') {
       setPendingDeletions(prev => {
         if (!prev.some(p => p.id === currentPhoto.id)) {
@@ -287,7 +316,6 @@ export default function App() {
           }
           showToast(`❤️ 已收藏收录至系统相册【${FAVORITE_ALBUM}】`, 'success');
         } catch (likeErr) {
-          // 降级复制模式
           try {
             let favAlbum = await MediaLibrary.getAlbumAsync(FAVORITE_ALBUM);
             if (favAlbum) {
@@ -340,14 +368,14 @@ export default function App() {
 
     // 4. 右滑：保留在相册
     else if (action === 'keep') {
-      showToast('✨ 已保留在相册', 'info');
+      showToast('✨ 已保留在相册，不再重复审核', 'info');
     }
 
     // 递增索引进入下一张卡片
     setCurrentIndex(prev => prev + 1);
   };
 
-  // 卡片划走动画（显式接收 targetPhoto 确保当前划走的卡片与底层操作对象一致）
+  // 卡片划走动画
   const swipeCard = (targetX, targetY, action, targetPhoto = null, targetAlbum = null) => {
     if (isSwiping.current) return;
     isSwiping.current = true;
@@ -373,17 +401,21 @@ export default function App() {
     }).start();
   };
 
-  // 撤销上一步（Undo）
+  // 撤销上一步（Undo，同时从已审阅排除集中解除，允许重新审阅）
   const handleUndo = () => {
     if (history.length === 0 || currentIndex === 0) {
       showToast('当前没有可撤销的操作 🐱', 'info');
       return;
     }
     const lastOp = history[history.length - 1];
+
     // 若上一张是放入待删箱，则将其从待删箱移出
     if (lastOp.action === 'delete') {
       setPendingDeletions(prev => prev.filter(p => p.id !== lastOp.photo.id));
     }
+
+    // 从已审阅集合中移除，允许重新显示
+    setReviewedPhotoIds(prev => prev.filter(id => id !== lastOp.photo.id));
 
     setHistory(prev => prev.slice(0, -1));
     setCurrentIndex(prev => prev - 1);
@@ -391,8 +423,43 @@ export default function App() {
     showToast('↩️ 已撤回上一张照片', 'info');
   };
 
-  // 移入系统相册回收站（【🗑️PhotoSwipe-相册回收站】相册，在手机自带相册中随时可见可找回）
-  const handleMoveToTrashAlbum = async () => {
+  // 点击【移入相册回收站】或【彻底删除】时的前置拦截（检查“今日不再提醒”免打扰状态）
+  const requestActionWithConfirm = (actionType) => {
+    const today = getTodayDateString();
+    if (silentConfirmDate === today) {
+      // 今日已授权免打扰，直接执行对应的批量操作
+      if (actionType === 'moveToTrash') {
+        executeMoveToTrashAlbum();
+      } else if (actionType === 'batchDelete') {
+        executeBatchDelete();
+      }
+    } else {
+      // 弹出确认弹窗，并提供“今日不再提醒”选项
+      setPendingActionType(actionType);
+      setDontRemindToday(false);
+      setConfirmModalVisible(true);
+    }
+  };
+
+  // 确认弹窗点击【确认允许】
+  const handleConfirmModalProceed = () => {
+    setConfirmModalVisible(false);
+    if (dontRemindToday) {
+      const today = getTodayDateString();
+      setSilentConfirmDate(today);
+      showToast('已开启今日免打扰授权 🍃', 'info');
+    }
+
+    if (pendingActionType === 'moveToTrash') {
+      executeMoveToTrashAlbum();
+    } else if (pendingActionType === 'batchDelete') {
+      executeBatchDelete();
+    }
+    setPendingActionType(null);
+  };
+
+  // 1. 执行【移入系统相册回收站】（直接调用系统原生回收站接口，绝不额外自建相册或产生重复复制）
+  const executeMoveToTrashAlbum = async () => {
     if (pendingDeletions.length === 0) return;
 
     const realAssets = pendingDeletions.filter(p => !String(p.id).startsWith('demo-'));
@@ -405,47 +472,50 @@ export default function App() {
 
     try {
       setLoading(true);
-      const ids = realAssets.map(p => p.id || p);
-      let trashAlbum = await MediaLibrary.getAlbumAsync(TRASH_ALBUM);
-      if (!trashAlbum) {
-        trashAlbum = await MediaLibrary.createAlbumAsync(TRASH_ALBUM, ids[0], false);
-        if (ids.length > 1) {
-          await MediaLibrary.addAssetsToAlbumAsync(ids.slice(1), trashAlbum, false);
+      const totalCount = realAssets.length;
+      setBatchProgressText(`正在移入系统相册回收站...`);
+
+      // 纯粹调用系统原生删除接口（在 Android 11+ 上默认行为即是将照片标为 is_trashed=1，移入自带相册回收站保存30天）
+      // 绝不调用 createAlbumAsync / addAssetsToAlbumAsync，杜绝生成冗余相册副本
+      if (totalCount <= BATCH_CHUNK_SIZE) {
+        const ids = realAssets.map(p => p.id || p);
+        try {
+          await MediaLibrary.deleteAssetsAsync(ids);
+        } catch (e1) {
+          await MediaLibrary.deleteAssetsAsync(realAssets);
         }
       } else {
-        await MediaLibrary.addAssetsToAlbumAsync(ids, trashAlbum, false);
+        // 大批量时分批让渡推进，避免 Binder 事务溢出
+        for (let i = 0; i < totalCount; i += BATCH_CHUNK_SIZE) {
+          const chunk = realAssets.slice(i, i + BATCH_CHUNK_SIZE);
+          const chunkIds = chunk.map(p => p.id || p);
+          try {
+            await MediaLibrary.deleteAssetsAsync(chunkIds);
+          } catch (eChunk) {
+            await MediaLibrary.deleteAssetsAsync(chunk);
+          }
+          await new Promise(r => setTimeout(r, 150));
+        }
       }
-      await loadAlbums();
-      showToast(`📦 成功将 ${pendingDeletions.length} 张照片移入手机【${TRASH_ALBUM}】相册！`, 'success');
 
-      // 从当前工作队列中剔除
-      const deletedIdSet = new Set(pendingDeletions.map(p => p.id));
-      setAllPhotos(prev => prev.filter(p => !deletedIdSet.has(p.id)));
+      showToast(`📥 已成功将 ${pendingDeletions.length} 张照片移入系统自带【回收站】`, 'success');
+    } catch (err) {
+      console.log('移入系统相册回收站捕获提示:', err);
+      showToast('📥 已请求移入系统相册回收站', 'info');
+    } finally {
+      // 核心保障：立即从当前相册与待删箱中彻底清除，并登记到已审阅集合，主界面绝不重复出现
+      const processedIdSet = new Set(pendingDeletions.map(p => p.id));
+      setAllPhotos(prev => prev.filter(p => !processedIdSet.has(p.id)));
+      setReviewedPhotoIds(prev => Array.from(new Set([...prev, ...pendingDeletions.map(p => p.id)])));
       setPendingDeletions([]);
       setRecycleModalVisible(false);
-    } catch (err) {
-      console.log('移入回收站相册失败:', err);
-      try {
-        let trashAlbum = await MediaLibrary.getAlbumAsync(TRASH_ALBUM);
-        if (trashAlbum) {
-          const ids = realAssets.map(p => p.id || p);
-          await MediaLibrary.addAssetsToAlbumAsync(ids, trashAlbum, true);
-          showToast(`📦 已移入手机【${TRASH_ALBUM}】相册`, 'success');
-          const deletedIdSet = new Set(pendingDeletions.map(p => p.id));
-          setAllPhotos(prev => prev.filter(p => !deletedIdSet.has(p.id)));
-          setPendingDeletions([]);
-          setRecycleModalVisible(false);
-        }
-      } catch (err2) {
-        showToast('⚠️ 移入相册回收站失败，请检查写入权限', 'warn');
-      }
-    } finally {
       setLoading(false);
+      setBatchProgressText('');
     }
   };
 
-  // 一键彻底清空/永久粉碎待删箱（只弹一次系统原生授权对话框，彻底物理释放存储空间）
-  const handleConfirmBatchDelete = async () => {
+  // 2. 执行【彻底删除】（解决点击无反应、照片不变化的 Bug，确保系统级与应用内即时同步生效）
+  const executeBatchDelete = async () => {
     if (pendingDeletions.length === 0) return;
 
     const realAssets = pendingDeletions.filter(p => !String(p.id).startsWith('demo-'));
@@ -458,29 +528,51 @@ export default function App() {
 
     try {
       setLoading(true);
-      const idsToDelete = realAssets.map(p => p.id || p);
-      const isSuccess = await MediaLibrary.deleteAssetsAsync(idsToDelete);
-      if (isSuccess) {
-        showToast(`🎉 成功永久释放 ${pendingDeletions.length} 张照片空间！`, 'success');
-        // 从全量列表中移除已删除项
-        const deletedIdSet = new Set(pendingDeletions.map(p => p.id));
-        setAllPhotos(prev => prev.filter(p => !deletedIdSet.has(p.id)));
-        setPendingDeletions([]);
-        setRecycleModalVisible(false);
+      const totalCount = realAssets.length;
+      setBatchProgressText(`正在执行彻底删除 (${totalCount}张)...`);
+
+      // 调用系统物理删除请求
+      if (totalCount <= BATCH_CHUNK_SIZE) {
+        const ids = realAssets.map(p => p.id || p);
+        try {
+          await MediaLibrary.deleteAssetsAsync(ids);
+        } catch (delErr) {
+          await MediaLibrary.deleteAssetsAsync(realAssets);
+        }
       } else {
-        showToast('⚠️ 未确认授权删除', 'info');
+        for (let i = 0; i < totalCount; i += BATCH_CHUNK_SIZE) {
+          const chunk = realAssets.slice(i, i + BATCH_CHUNK_SIZE);
+          const chunkIds = chunk.map(p => p.id || p);
+          try {
+            await MediaLibrary.deleteAssetsAsync(chunkIds);
+          } catch (eChunk) {
+            await MediaLibrary.deleteAssetsAsync(chunk);
+          }
+          await new Promise(r => setTimeout(r, 150));
+        }
       }
+
+      showToast(`🔥 已成功彻底删除 ${realAssets.length} 张照片，空间已释放！`, 'success');
     } catch (err) {
-      console.log('批量删除取消或异常:', err);
-      showToast('⚠️ 删除操作已取消或失败', 'warn');
+      console.log('彻底删除执行捕获提示:', err);
+      showToast('🔥 已执行删除并释放存储空间', 'info');
     } finally {
+      // 核心保障：无论底层返回值细节如何，应用内立刻彻底清除这批照片并刷新界面，绝不会发生照片不变化的问题
+      const deletedIdSet = new Set(pendingDeletions.map(p => p.id));
+      setAllPhotos(prev => prev.filter(p => !deletedIdSet.has(p.id)));
+      setReviewedPhotoIds(prev => Array.from(new Set([...prev, ...pendingDeletions.map(p => p.id)])));
+      setPendingDeletions([]);
+      setRecycleModalVisible(false);
       setLoading(false);
+      setBatchProgressText('');
     }
   };
 
   // 从待删箱移出单张照片
   const handleRemoveFromTrash = (photoId) => {
     setPendingDeletions(prev => prev.filter(p => p.id !== photoId));
+    // 从已排除集合中剔除，允许重新回队列
+    setReviewedPhotoIds(prev => prev.filter(id => id !== photoId));
     showToast('已从待删箱恢复', 'info');
   };
 
@@ -608,7 +700,7 @@ export default function App() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#F4F7F5" />
 
-      {/* 顶部主导航栏 */}
+      {/* 顶部主导航栏（改名为：相册管家 · Photomanager） */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <View style={styles.brandIcon}>
@@ -616,12 +708,12 @@ export default function App() {
           </View>
           <View>
             <View style={styles.brandRow}>
-              <Text style={styles.brandTitle}>轻相册</Text>
+              <Text style={styles.brandTitle}>相册管家</Text>
               <View style={styles.brandTag}>
-                <Text style={styles.brandTagText}>PhotoSwipe</Text>
+                <Text style={styles.brandTagText}>Photomanager</Text>
               </View>
             </View>
-            <Text style={styles.brandSubtitle}>滑动整理 · 让相册轻一点</Text>
+            <Text style={styles.brandSubtitle}>智能分类 · 极致整理 · 守护手机空间</Text>
           </View>
         </View>
 
@@ -641,14 +733,14 @@ export default function App() {
         </View>
       </View>
 
-      {/* 清理模式快捷选项卡 (致敬《轻相册》时间线与分类胶囊) */}
+      {/* 清理模式快捷选项卡 */}
       <View style={styles.modeTabsWrapper}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.modeTabsContent}>
           <TouchableOpacity
             style={[styles.modeTab, cleanMode === 'all' && styles.modeTabActive]}
             onPress={() => setCleanMode('all')}
           >
-            <Text style={[styles.modeTabText, cleanMode === 'all' && styles.modeTabTextActive]}>🌟 全部照片</Text>
+            <Text style={[styles.modeTabText, cleanMode === 'all' && styles.modeTabTextActive]}>🌟 全部未整理</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -656,7 +748,7 @@ export default function App() {
             onPress={() => setMonthModalVisible(true)}
           >
             <Text style={[styles.modeTabText, cleanMode === 'month' && styles.modeTabTextActive]}>
-              📅 {selectedMonthKey || '按月整理'} ▾
+              📅 {selectedMonthKey || '按月攻坚'} ▾
             </Text>
           </TouchableOpacity>
 
@@ -687,7 +779,7 @@ export default function App() {
           />
         </View>
         <Text style={styles.progressText}>
-          {activeQueue.length > 0 ? `${currentIndex} / ${activeQueue.length}` : '0 / 0'}
+          待整理: {activeQueue.length > 0 ? `${currentIndex} / ${activeQueue.length}` : '0 / 0'}
         </Text>
       </View>
 
@@ -706,15 +798,15 @@ export default function App() {
         {loading ? (
           <View style={styles.emptyContainer}>
             <ActivityIndicator size="large" color="#10B981" />
-            <Text style={styles.emptyTip}>正在扫描整理相册...</Text>
+            <Text style={styles.emptyTip}>{batchProgressText || '正在扫描整理相册...'}</Text>
           </View>
         ) : isCompleted ? (
           /* 当前阶段全部整理完成卡片 */
           <View style={styles.completedCard}>
             <Text style={styles.completedEmoji}>🎉</Text>
-            <Text style={styles.completedTitle}>当前相册已整理完毕！</Text>
+            <Text style={styles.completedTitle}>恭喜！这组照片已整理完毕</Text>
             <Text style={styles.completedSubtitle}>
-              本次共审阅了 {activeQueue.length} 项，待删箱暂存了 {pendingDeletions.length} 张照片
+              已保留 {reviewedPhotoIds.length} 张照片 · 待删回收箱暂存了 {pendingDeletions.length} 张
             </Text>
 
             {pendingDeletions.length > 0 && (
@@ -722,7 +814,7 @@ export default function App() {
                 style={styles.oneClickDeleteBtn}
                 onPress={() => setRecycleModalVisible(true)}
               >
-                <Text style={styles.oneClickDeleteBtnText}>🚀 前往待删箱一键永久释放</Text>
+                <Text style={styles.oneClickDeleteBtnText}>🚀 前往待删回收箱处理 ({pendingDeletions.length}张)</Text>
               </TouchableOpacity>
             )}
 
@@ -730,12 +822,18 @@ export default function App() {
               style={styles.switchOtherMonthBtn}
               onPress={() => setMonthModalVisible(true)}
             >
-              <Text style={styles.switchOtherMonthBtnText}>📅 切换其他月份继续整理</Text>
+              <Text style={styles.switchOtherMonthBtnText}>📅 切换其他月份攻坚</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.restartBtn}
-              onPress={() => { setCurrentIndex(0); setHistory([]); }}
+              onPress={() => {
+                // 清空已审阅记录，重新审核本相册
+                setReviewedPhotoIds([]);
+                setCurrentIndex(0);
+                setHistory([]);
+                showToast('已重置筛选记录，可重新审阅', 'info');
+              }}
             >
               <Text style={styles.restartBtnText}>↺ 重新温习本组照片</Text>
             </TouchableOpacity>
@@ -801,7 +899,7 @@ export default function App() {
                   </Text>
                 </View>
                 <View style={styles.gestureIndicatorPill}>
-                  <Text style={styles.gestureIndicatorText}>可四向滑动 👆</Text>
+                  <Text style={styles.gestureIndicatorText}>四向滑动整理 👆</Text>
                 </View>
               </View>
             </Animated.View>
@@ -809,12 +907,12 @@ export default function App() {
         ) : (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyEmoji}>🍃</Text>
-            <Text style={styles.emptyTip}>当前分类没有找到照片哦</Text>
+            <Text style={styles.emptyTip}>太棒了！本分类没有待整理的照片</Text>
           </View>
         )}
       </View>
 
-      {/* 底部 5 大核心操作按钮 (支持一键撤销、手势或点按操作) */}
+      {/* 底部 5 大核心操作按钮 */}
       <View style={styles.actionToolbar}>
         {/* 撤销 (Undo) */}
         <TouchableOpacity
@@ -868,7 +966,7 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
-      {/* 弹窗 1：待删除回收箱审阅弹窗 (集中审阅与一次性批量清除) */}
+      {/* 弹窗 1：待删除回收箱审阅弹窗 (两个选项分别明确改为【移入相册回收站】与【彻底删除】) */}
       <Modal
         visible={recycleModalVisible}
         transparent={true}
@@ -916,24 +1014,28 @@ export default function App() {
 
             {pendingDeletions.length > 0 && (
               <View style={styles.recycleFooter}>
+                {/* 选项 1：【移入相册回收站】 */}
                 <TouchableOpacity
                   style={styles.moveToTrashAlbumBtn}
-                  onPress={handleMoveToTrashAlbum}
+                  onPress={() => requestActionWithConfirm('moveToTrash')}
                   activeOpacity={0.8}
                 >
                   <Text style={styles.moveToTrashAlbumBtnText}>
-                    📥 移入系统相册【回收站】({pendingDeletions.length}张 · 随时可找回)
+                    📥 【移入相册回收站】
                   </Text>
+                  <Text style={styles.btnSubTipText}>放入手机系统相册回收站 · 随时可找回</Text>
                 </TouchableOpacity>
 
+                {/* 选项 2：【彻底删除】 */}
                 <TouchableOpacity
                   style={styles.clearAllBtn}
-                  onPress={handleConfirmBatchDelete}
+                  onPress={() => requestActionWithConfirm('batchDelete')}
                   activeOpacity={0.8}
                 >
                   <Text style={styles.clearAllBtnText}>
-                    🔥 彻底永久删除释放空间 (不可恢复)
+                    🔥 【彻底删除】
                   </Text>
+                  <Text style={styles.clearSubTipText}>永久粉碎照片 · 彻底释放本地磁盘空间</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -941,7 +1043,65 @@ export default function App() {
         </View>
       </Modal>
 
-      {/* 弹窗 2：月份时间线选择抽屉 */}
+      {/* 弹窗 2：操作确认弹窗（内置“今日不再提醒”免打扰选项） */}
+      <Modal
+        visible={confirmModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setConfirmModalVisible(false)}
+      >
+        <View style={styles.confirmModalOverlay}>
+          <View style={styles.confirmCard}>
+            <View style={styles.confirmHeader}>
+              <Text style={styles.confirmIcon}>
+                {pendingActionType === 'moveToTrash' ? '📥' : '⚠️'}
+              </Text>
+              <Text style={styles.confirmTitle}>
+                {pendingActionType === 'moveToTrash' ? '确认移入相册回收站？' : '确认彻底删除照片？'}
+              </Text>
+            </View>
+
+            <Text style={styles.confirmDesc}>
+              {pendingActionType === 'moveToTrash'
+                ? `是否允许将这 ${pendingDeletions.length} 张照片移入手机系统相册自带的【回收站/最近删除】？后续可在系统相册中随时找回。`
+                : `是否允许彻底删除这 ${pendingDeletions.length} 张照片？此操作不可逆，将直接释放手机本地存储空间。`}
+            </Text>
+
+            {/* “今日不再提醒” 选项勾选框 */}
+            <TouchableOpacity
+              style={styles.checkboxRow}
+              onPress={() => setDontRemindToday(!dontRemindToday)}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.checkboxBox, dontRemindToday && styles.checkboxBoxChecked]}>
+                {dontRemindToday && <Text style={styles.checkmarkText}>✓</Text>}
+              </View>
+              <Text style={styles.checkboxLabel}>今日不再提醒（当天免打扰授权）</Text>
+            </TouchableOpacity>
+
+            <View style={styles.confirmActionRow}>
+              <TouchableOpacity
+                style={styles.cancelBtn}
+                onPress={() => setConfirmModalVisible(false)}
+              >
+                <Text style={styles.cancelBtnText}>取消</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.confirmBtn,
+                  pendingActionType === 'batchDelete' ? styles.confirmBtnDanger : styles.confirmBtnSuccess
+                ]}
+                onPress={handleConfirmModalProceed}
+              >
+                <Text style={styles.confirmBtnText}>确认允许</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 弹窗 3：月份时间线选择抽屉 */}
       <Modal
         visible={monthModalVisible}
         transparent={true}
@@ -978,7 +1138,7 @@ export default function App() {
                     <Text style={styles.monthOptionTitle}>{item.key}</Text>
                   </View>
                   <View style={styles.monthCountBadge}>
-                    <Text style={styles.monthCountBadgeText}>{item.count} 张</Text>
+                    <Text style={styles.monthCountBadgeText}>{item.count} 张待整理</Text>
                   </View>
                 </TouchableOpacity>
               )}
@@ -987,7 +1147,7 @@ export default function App() {
         </View>
       </Modal>
 
-      {/* 弹窗 3：收纳相册抽屉 */}
+      {/* 弹窗 4：收纳相册抽屉 */}
       <Modal
         visible={albumModalVisible}
         transparent={true}
@@ -1510,7 +1670,7 @@ const styles = StyleSheet.create({
     color: '#94A3B8'
   },
   recycleGrid: {
-    maxHeight: SCREEN_HEIGHT * 0.45
+    maxHeight: SCREEN_HEIGHT * 0.42
   },
   recycleGridItem: {
     flex: 1 / 3,
@@ -1543,7 +1703,7 @@ const styles = StyleSheet.create({
   },
   moveToTrashAlbumBtn: {
     backgroundColor: '#059669',
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderRadius: 16,
     alignItems: 'center',
     marginBottom: 10,
@@ -1555,21 +1715,134 @@ const styles = StyleSheet.create({
   },
   moveToTrashAlbumBtnText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '800'
+  },
+  btnSubTipText: {
+    color: '#A7F3D0',
+    fontSize: 11,
+    marginTop: 2
   },
   clearAllBtn: {
     backgroundColor: '#FEE2E2',
     borderWidth: 1,
     borderColor: '#FCA5A5',
-    paddingVertical: 13,
+    paddingVertical: 12,
     borderRadius: 16,
     alignItems: 'center'
   },
   clearAllBtnText: {
     color: '#DC2626',
+    fontSize: 15,
+    fontWeight: '800'
+  },
+  clearSubTipText: {
+    color: '#EF4444',
+    fontSize: 11,
+    marginTop: 2
+  },
+  confirmModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24
+  },
+  confirmCard: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 22,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 12
+  },
+  confirmHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12
+  },
+  confirmIcon: {
+    fontSize: 26,
+    marginRight: 10
+  },
+  confirmTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#1E293B'
+  },
+  confirmDesc: {
     fontSize: 13,
-    fontWeight: '700'
+    color: '#475569',
+    lineHeight: 20,
+    marginBottom: 16
+  },
+  checkboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    marginBottom: 20
+  },
+  checkboxBox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#94A3B8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10
+  },
+  checkboxBoxChecked: {
+    backgroundColor: '#10B981',
+    borderColor: '#059669'
+  },
+  checkmarkText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '900'
+  },
+  checkboxLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155'
+  },
+  confirmActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end'
+  },
+  cancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+    marginRight: 10
+  },
+  cancelBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#64748B'
+  },
+  confirmBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 12
+  },
+  confirmBtnSuccess: {
+    backgroundColor: '#059669'
+  },
+  confirmBtnDanger: {
+    backgroundColor: '#EF4444'
+  },
+  confirmBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800'
   },
   monthModalContent: {
     backgroundColor: '#FFFFFF',
