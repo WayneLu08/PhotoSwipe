@@ -23,6 +23,7 @@ import * as Haptics from 'expo-haptics';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SWIPE_THRESHOLD = 80;
 const FAVORITE_ALBUM = 'PhotoSwipe-精选喜欢';
+const TRASH_ALBUM = '🗑️PhotoSwipe-相册回收站';
 
 // 备用精选演示相片（在真机相册为空或权限受限时保底提供丝滑体验）
 const DEMO_PHOTOS = [
@@ -251,10 +252,10 @@ export default function App() {
     return `${y}-${m}-${day} ${h}:${min}`;
   };
 
-  // 执行核心动作
-  const handleAction = async (action, targetAlbum = null) => {
+  // 执行核心动作（显式传递 targetPhoto 彻底杜绝卡片错位与索引漂移）
+  const handleAction = async (action, targetPhoto = null, targetAlbum = null) => {
     const idx = currentIndexRef.current;
-    const currentPhoto = activeQueueRef.current[idx];
+    const currentPhoto = targetPhoto || activeQueueRef.current[idx];
     if (!currentPhoto) return;
 
     triggerHaptic(action);
@@ -346,8 +347,8 @@ export default function App() {
     setCurrentIndex(prev => prev + 1);
   };
 
-  // 卡片划走动画
-  const swipeCard = (targetX, targetY, action, targetAlbum = null) => {
+  // 卡片划走动画（显式接收 targetPhoto 确保当前划走的卡片与底层操作对象一致）
+  const swipeCard = (targetX, targetY, action, targetPhoto = null, targetAlbum = null) => {
     if (isSwiping.current) return;
     isSwiping.current = true;
 
@@ -356,7 +357,7 @@ export default function App() {
       duration: 180,
       useNativeDriver: false
     }).start(() => {
-      handleAction(action, targetAlbum);
+      handleAction(action, targetPhoto, targetAlbum);
       position.setValue({ x: 0, y: 0 });
       isSwiping.current = false;
     });
@@ -390,7 +391,60 @@ export default function App() {
     showToast('↩️ 已撤回上一张照片', 'info');
   };
 
-  // 一键彻底清空/删除待删箱（只弹一次系统原生授权对话框，最畅快的体验）
+  // 移入系统相册回收站（【🗑️PhotoSwipe-相册回收站】相册，在手机自带相册中随时可见可找回）
+  const handleMoveToTrashAlbum = async () => {
+    if (pendingDeletions.length === 0) return;
+
+    const realAssets = pendingDeletions.filter(p => !String(p.id).startsWith('demo-'));
+    if (realAssets.length === 0) {
+      setPendingDeletions([]);
+      setRecycleModalVisible(false);
+      showToast('🗑 [演示] 已移入系统相册回收站', 'success');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const ids = realAssets.map(p => p.id || p);
+      let trashAlbum = await MediaLibrary.getAlbumAsync(TRASH_ALBUM);
+      if (!trashAlbum) {
+        trashAlbum = await MediaLibrary.createAlbumAsync(TRASH_ALBUM, ids[0], false);
+        if (ids.length > 1) {
+          await MediaLibrary.addAssetsToAlbumAsync(ids.slice(1), trashAlbum, false);
+        }
+      } else {
+        await MediaLibrary.addAssetsToAlbumAsync(ids, trashAlbum, false);
+      }
+      await loadAlbums();
+      showToast(`📦 成功将 ${pendingDeletions.length} 张照片移入手机【${TRASH_ALBUM}】相册！`, 'success');
+
+      // 从当前工作队列中剔除
+      const deletedIdSet = new Set(pendingDeletions.map(p => p.id));
+      setAllPhotos(prev => prev.filter(p => !deletedIdSet.has(p.id)));
+      setPendingDeletions([]);
+      setRecycleModalVisible(false);
+    } catch (err) {
+      console.log('移入回收站相册失败:', err);
+      try {
+        let trashAlbum = await MediaLibrary.getAlbumAsync(TRASH_ALBUM);
+        if (trashAlbum) {
+          const ids = realAssets.map(p => p.id || p);
+          await MediaLibrary.addAssetsToAlbumAsync(ids, trashAlbum, true);
+          showToast(`📦 已移入手机【${TRASH_ALBUM}】相册`, 'success');
+          const deletedIdSet = new Set(pendingDeletions.map(p => p.id));
+          setAllPhotos(prev => prev.filter(p => !deletedIdSet.has(p.id)));
+          setPendingDeletions([]);
+          setRecycleModalVisible(false);
+        }
+      } catch (err2) {
+        showToast('⚠️ 移入相册回收站失败，请检查写入权限', 'warn');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 一键彻底清空/永久粉碎待删箱（只弹一次系统原生授权对话框，彻底物理释放存储空间）
   const handleConfirmBatchDelete = async () => {
     if (pendingDeletions.length === 0) return;
 
@@ -437,9 +491,10 @@ export default function App() {
       Alert.alert('提示', '请输入新相册名称');
       return;
     }
+    const currentPhoto = activeQueueRef.current[currentIndexRef.current];
     setAlbumModalVisible(false);
     setNewAlbumName('');
-    swipeCard(0, SCREEN_HEIGHT, 'album', trimmed);
+    swipeCard(0, SCREEN_HEIGHT, 'album', currentPhoto, trimmed);
   };
 
   // 原生独占手势监听
@@ -463,6 +518,7 @@ export default function App() {
       },
       onPanResponderRelease: (_, gestureState) => {
         if (isSwiping.current) return;
+        const currentPhoto = activeQueueRef.current[currentIndexRef.current];
         const { dx, dy } = gestureState;
         const absX = Math.abs(dx);
         const absY = Math.abs(dy);
@@ -470,7 +526,7 @@ export default function App() {
         if (absY > absX && absY > SWIPE_THRESHOLD) {
           if (dy < -SWIPE_THRESHOLD) {
             // ⬆ 上滑：收藏喜欢
-            swipeCard(0, -SCREEN_HEIGHT * 1.2, 'like');
+            swipeCard(0, -SCREEN_HEIGHT * 1.2, 'like', currentPhoto);
           } else {
             // ⬇ 下滑：收纳到相册
             resetPosition();
@@ -479,10 +535,10 @@ export default function App() {
         } else if (absX > SWIPE_THRESHOLD) {
           if (dx < -SWIPE_THRESHOLD) {
             // ⬅ 左滑：待删箱
-            swipeCard(-SCREEN_WIDTH * 1.5, 0, 'delete');
+            swipeCard(-SCREEN_WIDTH * 1.5, 0, 'delete', currentPhoto);
           } else {
             // ➡ 右滑：保留在相册
-            swipeCard(SCREEN_WIDTH * 1.5, 0, 'keep');
+            swipeCard(SCREEN_WIDTH * 1.5, 0, 'keep', currentPhoto);
           }
         } else {
           resetPosition();
@@ -502,6 +558,8 @@ export default function App() {
   });
 
   const topCardStyle = {
+    zIndex: 10,
+    elevation: 10,
     transform: [
       ...position.getTranslateTransform(),
       { rotate }
@@ -772,7 +830,7 @@ export default function App() {
         {/* 左滑删除 */}
         <TouchableOpacity
           style={[styles.toolBtn, styles.deleteBtn]}
-          onPress={() => swipeCard(-SCREEN_WIDTH * 1.5, 0, 'delete')}
+          onPress={() => swipeCard(-SCREEN_WIDTH * 1.5, 0, 'delete', currentPhoto)}
           activeOpacity={0.7}
         >
           <Text style={styles.toolBtnEmoji}>🗑</Text>
@@ -792,7 +850,7 @@ export default function App() {
         {/* 右滑保留 */}
         <TouchableOpacity
           style={[styles.toolBtn, styles.keepBtn]}
-          onPress={() => swipeCard(SCREEN_WIDTH * 1.5, 0, 'keep')}
+          onPress={() => swipeCard(SCREEN_WIDTH * 1.5, 0, 'keep', currentPhoto)}
           activeOpacity={0.7}
         >
           <Text style={styles.toolBtnEmoji}>✨</Text>
@@ -802,7 +860,7 @@ export default function App() {
         {/* 上滑收藏 */}
         <TouchableOpacity
           style={[styles.toolBtn, styles.likeBtn]}
-          onPress={() => swipeCard(0, -SCREEN_HEIGHT * 1.2, 'like')}
+          onPress={() => swipeCard(0, -SCREEN_HEIGHT * 1.2, 'like', currentPhoto)}
           activeOpacity={0.7}
         >
           <Text style={styles.toolBtnEmoji}>❤️</Text>
@@ -859,12 +917,22 @@ export default function App() {
             {pendingDeletions.length > 0 && (
               <View style={styles.recycleFooter}>
                 <TouchableOpacity
+                  style={styles.moveToTrashAlbumBtn}
+                  onPress={handleMoveToTrashAlbum}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.moveToTrashAlbumBtnText}>
+                    📥 移入系统相册【回收站】({pendingDeletions.length}张 · 随时可找回)
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
                   style={styles.clearAllBtn}
                   onPress={handleConfirmBatchDelete}
                   activeOpacity={0.8}
                 >
                   <Text style={styles.clearAllBtnText}>
-                    🔥 一键彻底释放 {pendingDeletions.length} 张照片空间
+                    🔥 彻底永久删除释放空间 (不可恢复)
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -959,8 +1027,9 @@ export default function App() {
                 <TouchableOpacity
                   style={styles.albumItem}
                   onPress={() => {
+                    const currentPhoto = activeQueueRef.current[currentIndexRef.current];
                     setAlbumModalVisible(false);
-                    swipeCard(0, SCREEN_HEIGHT, 'album', item);
+                    swipeCard(0, SCREEN_HEIGHT, 'album', currentPhoto, item);
                   }}
                 >
                   <Text style={styles.albumItemEmoji}>📁</Text>
@@ -1183,7 +1252,8 @@ const styles = StyleSheet.create({
     shadowRadius: 12
   },
   bottomCard: {
-    zIndex: 1
+    zIndex: 1,
+    elevation: 2
   },
   cardImage: {
     width: '100%',
@@ -1471,16 +1541,35 @@ const styles = StyleSheet.create({
   recycleFooter: {
     marginTop: 14
   },
-  clearAllBtn: {
-    backgroundColor: '#DC2626',
+  moveToTrashAlbumBtn: {
+    backgroundColor: '#059669',
     paddingVertical: 14,
+    borderRadius: 16,
+    alignItems: 'center',
+    marginBottom: 10,
+    elevation: 2,
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 4
+  },
+  moveToTrashAlbumBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800'
+  },
+  clearAllBtn: {
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    paddingVertical: 13,
     borderRadius: 16,
     alignItems: 'center'
   },
   clearAllBtnText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '800'
+    color: '#DC2626',
+    fontSize: 13,
+    fontWeight: '700'
   },
   monthModalContent: {
     backgroundColor: '#FFFFFF',

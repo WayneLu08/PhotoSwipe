@@ -5,14 +5,14 @@
 **像刷动态一样丝滑整理相册 · 时间胶囊按月整理 · 待删回收箱一键清空 · 屏幕截图/大视频专区**
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-v2.0.0-emerald?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/Version-v2.1.0-emerald?style=flat-square" alt="Version" />
   <img src="https://img.shields.io/badge/Platform-Android%20%7C%20Web-blue?style=flat-square" alt="Platform" />
   <img src="https://img.shields.io/badge/Framework-React%20Native%20%2B%20Expo-61dafb?style=flat-square" alt="Framework" />
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/Build-GitHub%20Actions%20APK-orange?style=flat-square" alt="Build" />
 </p>
 
-[下载最新 APK (v2.0.0)](#-安装包下载) | [中文说明](#chinese) | [English](#english)
+[下载最新 APK (v2.1.0)](#-安装包下载) | [中文说明](#chinese) | [English](#english)
 
 </div>
 
@@ -61,8 +61,12 @@
 
 ## 📦 安装包下载
 
-- **GitHub Release 直链**：[PhotoSwipe-v2.0.0.apk](https://github.com/WayneLu08/PhotoSwipe/releases/download/v2.0.0/PhotoSwipe-v2.0.0.apk)
+- **GitHub Release 直链**：[PhotoSwipe-v2.1.0.apk](https://github.com/WayneLu08/PhotoSwipe/releases/download/v2.1.0/PhotoSwipe-v2.1.0.apk)
 - **体积**：~63 MB（独立离线脱机包，内嵌完整 Hermes JSBundle 与资源，开箱即用，免联网免配置）
+
+### 🌟 v2.1.0 修复与优化亮点：
+1. **顶层卡片与操作对象严格对齐**：彻底修复顶层卡片与底层操作对象错位问题，显式传递 `targetPhoto` 并加固 `zIndex: 10, elevation: 10`，确保划走哪张就处理哪张。
+2. **新增「系统相册回收站」通道**：解决删除照片不在手机自带回收站显示的困扰，支持一键将待删照片安全移入手机自带相册的【🗑️PhotoSwipe-相册回收站】相册，随时可查看找回；同时保留一键彻底物理粉碎释放真实存储空间的能力。
 
 ---
 
