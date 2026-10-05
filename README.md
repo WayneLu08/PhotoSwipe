@@ -1,30 +1,31 @@
 <div align="center">
 
-# 🍃 PhotoSwipe · 轻相册
-### Swipe, Organize, Declutter — 让相册轻一点，再轻一点
-**像刷动态一样丝滑整理相册 · 时间胶囊按月整理 · 待删回收箱一键清空 · 屏幕截图/大视频专区**
+# 📱 相册管家 · Photomanager
+### Swipe, Organize, Declutter — 高效手势整理 · 智能空间清理
+**四向手势丝滑整理 · 时间胶囊按月攻坚 · 待删回收箱双模式 · 免打扰智能确认**
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-v2.1.0-emerald?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/Version-v2.1.1-emerald?style=flat-square" alt="Version" />
   <img src="https://img.shields.io/badge/Platform-Android%20%7C%20Web-blue?style=flat-square" alt="Platform" />
   <img src="https://img.shields.io/badge/Framework-React%20Native%20%2B%20Expo-61dafb?style=flat-square" alt="Framework" />
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License" />
-  <img src="https://img.shields.io/badge/Build-GitHub%20Actions%20APK-orange?style=flat-square" alt="Build" />
 </p>
 
-[下载最新 APK (v2.1.0)](#-安装包下载) | [中文说明](#chinese) | [English](#english)
+[功能亮点](#功能亮点) | [核心交互](#-核心手势与交互) | [更新日志](#-更新日志) | [English](#english)
 
 </div>
 
 ---
 
-<span id="chinese"></span>
-## 💡 为什么需要 PhotoSwipe · 轻相册？
+<span id="功能亮点"></span>
+## 💡 为什么选择「相册管家 · Photomanager」？
 
-面对手机里积攒的成千上万张相片、过期的屏幕截图、随手拍下的模糊废片，你是否也觉得系统相册整理起来费时费力？
-- **左划一次弹窗一次？太烦人！** PhotoSwipe v2.0.0 引入**待删回收箱机制**，滑动时只暂存，整理完毕后一次性彻底批量抹除，不频繁打断手感！
-- **上万张照片无从下手？** 引入**时间胶囊（按月整理）**，按年、月分组攻坚，整理完一个月自动打卡完成，成就感爆棚！
-- **想快速清理无用截图和大视频？** 提供**截图专区**与**视频瘦身**专项筛选通道，一键抓出占用存储空间的元凶。
+面对手机中积攒的成千上万张相片、过期的屏幕截图、随手拍下的模糊废片，系统相册的手动整理往往低效而繁琐：
+- **滑动整理不打断手感**：引入**待删回收箱机制**，左滑仅作暂存，整理完毕后一次性统一处理，无需每张都触发系统授权。
+- **双重安全删除模式**：待删回收箱提供【移入相册回收站】（安全移入系统相册回收站，随时可撤销找回）与【彻底删除】（永久删除，彻底释放存储空间）两种独立处理通道。
+- **免打扰智能确认**：操作弹窗支持「今日不再提醒」选项，开启后当日批量操作直接执行，告别重复弹窗打扰。
+- **已筛选相片排重机制**：已保留、收藏、归档或标记待删的照片自动进入已审阅列表，返回主界面或批量处理后绝不重复展示，整理流畅不走回头路。
+- **时间胶囊按月整理**：按年份与月份自动聚合，支持单月定点攻坚与通关进度追踪，告别相册整理焦虑。
 
 ---
 
@@ -32,52 +33,51 @@
 
 | 手势方向 | 对应动作 | 系统联动机制 | 交互特色 |
 | :---: | :---: | :--- | :--- |
-| **⬆ 上滑** | **❤️ 喜欢 / 收藏** | 物理加入系统专属相册「PhotoSwipe-精选喜欢」 | 自动创建或定位相册，支持跨卷复制兜底 |
-| **⬇ 下滑** | **📁 收纳到相册** | 真实归档至系统既有相册或一键新建相册 | 弹出收纳抽屉，支持快速新建自定义分类 |
-| **⬅ 左滑** | **🗑 移入待删箱** | 暂存至待删回收箱（不弹窗打断手感） | 顶部待删箱常驻角标，可随时复核并一键永久释放 |
-| **➡ 右滑** | **✨ 保留相册** | 原相册留存 | 标记保留，直接推进至下一张 |
-| **↩ 撤销** | **一键回退 (Undo)** | 平滑飞回卡片顶部，撤回对应操作 | 误滑手抖？支持无损回退历史动作 |
+| **⬆ 上滑** | **❤️ 收藏精选** | 物理加入系统专属相册「精选收藏」 | 自动定位系统相册，支持跨卷保存 |
+| **⬇ 下滑** | **📁 归档相册** | 归档至系统既有相册或一键新建相册 | 弹出收纳抽屉，支持自定义分类相册 |
+| **⬅ 左滑** | **🗑 移入待删** | 暂存至待删回收箱（不打断手势） | 顶部待删箱常驻角标，可随时复核并批量处理 |
+| **➡ 右滑** | **✨ 留在相册** | 原相册留存，标记已审阅 | 标记保留，直接推进至下一张未审阅照片 |
+| **↩ 撤销** | **一键回退 (Undo)** | 平滑飞回卡片顶部，撤回对应操作 | 支持无损回退误操作与恢复已审阅状态 |
 
 ---
 
-## 🚀 v2.0.0 核心功能全景
+## 🚀 核心功能全景
 
-1. **时间胶囊 · 按月整理**：
-   - 自动提取拍摄时间，按 `YYYY年M月`（如 `2026年9月`、`2026年8月`）聚合成独立卡片堆。
-   - 包含月份完成进度条与通关结算卡片，轻松告别“相册整理焦虑”。
-2. **待删回收箱 · 一次性批量清理**：
-   - 划走删除时无感暂存，避免频繁弹窗授权。
-   - 待删箱支持缩略图网格预览、单张恢复、预估节省空间（MB/GB 统计）。
-   - 点击“一键彻底释放”，底层仅触发一次系统 Scoped Storage 原生删除授权，一键彻底释放几十 G 存储空间。
-3. **专项清理通道**：
-   - **截图专区**：自动过滤所有屏幕截图文件，快速清理无用截屏；
-   - **视频瘦身**：扫描相册全部视频文件，按体积快速审阅；
+1. **待删回收箱 · 双通道处理**：
+   - **【移入相册回收站】**：安全移入系统自带相册回收站，保留30天随时可找回，且不在手机相册中创建多余的冗余相册。
+   - **【彻底删除】**：永久粉碎选定照片，彻底释放设备宝贵存储空间。
+2. **今日不再提醒 · 智能免打扰**：
+   - 确认对话框内置“今日不再提醒”复选框，勾选后当天内再次执行批量操作自动跳过确认弹窗，丝滑高效。
+3. **已审阅排重 · 告别重复审核**：
+   - 全局追踪已筛选照片集合，从回收箱处理完毕返回主界面后，之前保留的照片绝不再次出现，自动顺延展示新照片。
+4. **时间胶囊 · 按月整理**：
+   - 自动提取拍摄时间，按年、月分组聚合成独立卡片堆，进度百分比实时展示。
+5. **专项清理通道**：
+   - **截图专区**：一键筛选全部屏幕截图；
+   - **视频瘦身**：扫描相册全部大视频文件；
    - **全量相册**：按时间倒序快速巡览全相册。
-4. **日系轻相册清新美学 UI**：
-   - 晨曦白与柔和薄荷绿自然配色，护眼治愈；
-   - 底部 5 个触控大按钮，双手手势与单手轻点全场景适配。
 
 ---
 
-## 📦 安装包下载
+## 📝 更新日志
 
-- **GitHub Release 直链**：[PhotoSwipe-v2.1.0.apk](https://github.com/WayneLu08/PhotoSwipe/releases/download/v2.1.0/PhotoSwipe-v2.1.0.apk)
-- **体积**：~63 MB（独立离线脱机包，内嵌完整 Hermes JSBundle 与资源，开箱即用，免联网免配置）
-
-### 🌟 v2.1.0 修复与优化亮点：
-1. **顶层卡片与操作对象严格对齐**：彻底修复顶层卡片与底层操作对象错位问题，显式传递 `targetPhoto` 并加固 `zIndex: 10, elevation: 10`，确保划走哪张就处理哪张。
-2. **新增「系统相册回收站」通道**：解决删除照片不在手机自带回收站显示的困扰，支持一键将待删照片安全移入手机自带相册的【🗑️PhotoSwipe-相册回收站】相册，随时可查看找回；同时保留一键彻底物理粉碎释放真实存储空间的能力。
+### 🌟 v2.1.1 优化亮点：
+1. **应用品牌升级**：正式更名为「相册管家 · Photomanager」，全界面采用专业清晰的视觉与交互语言。
+2. **待删回收箱按钮规范**：明确拆分为【移入相册回收站】与【彻底删除】两大标准操作。
+3. **免打扰确认弹窗**：新增「今日不再提醒」机制，当天免打扰，避免重复弹窗确认。
+4. **主界面排重机制**：已筛选过的照片不再重复出现，回收箱处理后无缝继续整理新相片。
+5. **杜绝多余相册生成**：去除历史版本中额外创建回收站相册的逻辑，纯净联动系统相册。
 
 ---
 
 <span id="english"></span>
 ## 🌟 English Overview
 
-**PhotoSwipe · Lite Photo** turns overwhelming camera roll cleanup into a delightful, game-like experience:
-- **Month-by-month Time Capsule**: Tackle photos grouped by year and month.
-- **Staging Recycle Bin**: Swipe left to stage deletions without annoying permission popups, then batch purge in a single click.
-- **Specialized Filters**: Quick modes for Screenshots and Large Videos.
-- **Undo Anytime**: Smoothly rewind mistaken swipes.
+**Photomanager** delivers a fast, gesture-driven approach to cleaning and decluttering your photo library:
+- **Two-way Purge Modes**: Support for moving to the system gallery trash (safe and recoverable) or permanently deleting to free up disk space.
+- **Do Not Disturb for Today**: "Don't remind me today" option to bypass repeated confirmations on subsequent purges.
+- **Deduplication Filter**: Photos that have already been reviewed (kept, favorited, archived, or trashed) will never appear repeatedly upon returning to the main deck.
+- **Time Capsules**: Organize photos effortlessly grouped by year and month.
 - **100% Offline & Private**: Zero cloud uploads; your photos remain entirely on your device.
 
 ---

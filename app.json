@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "PhotoSwipe · 轻相册",
-    "slug": "photoswipe",
-    "version": "2.1.0",
+    "name": "相册管家 · Photomanager",
+    "slug": "photomanager",
+    "version": "2.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -34,8 +34,8 @@
       [
         "expo-media-library",
         {
-          "photosPermission": "允许 PhotoSwipe 访问您的照片以进行滑动整理与分类",
-          "savePhotosPermission": "允许 PhotoSwipe 将照片归档至指定相册",
+          "photosPermission": "允许相册管家访问您的照片以进行滑动整理与分类",
+          "savePhotosPermission": "允许相册管家将照片归档至指定相册",
           "isAccessMediaLocationEnabled": true
         }
       ]
